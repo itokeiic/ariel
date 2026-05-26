@@ -218,20 +218,38 @@ What's landed (in order of commit):
    env, the full Blueprint → URDF → USD pipeline runs in one
    process. See §6 entry 15 for details.
 
+**Follow-on branch `compliant-joint-schema` (off `python-311-compat`):**
+
+7. `Add CompliantJoint + CappedLinearStiffness schema to ArmNode.` —
+   schema-only step toward the two-layer pattern in §6 entry 10. The
+   Blueprint can now describe a passive revolute joint on an arm with
+   the symmetric capped-linear τ(θ) law (matches soft_airframe's
+   `xconfig` mode). Default `ArmNode.joint = None` preserves the
+   existing welded behavior; both backends continue to emit fixed
+   joints because they don't yet consult `arm.joint`. See §6 entry
+   16.
+
 **Still pending — to pick up next session:**
 
-* **Compliant joints (URDF revolute + sidecar stiffness + USD
-  `ariel:*` attrs).** The two-layer pattern is documented in §6 entry
-  10 — zero-stiffness `revolute` joint in URDF, non-linear `τ(θ)` law
-  stashed as sidecar attrs for a runtime controller. Schema, emission
-  in both backends, USD post-processing, and a compliant-arm example
-  are all not yet written.
+* **Compliant-joint *emission*** in the backends — `blueprint_to_urdf`
+  emits `<joint type="revolute">` with zero `<dynamics>`,
+  `blueprint_to_mjspec` emits a `mjJNT_HINGE`, and
+  `scripts/urdf_to_usd.py` post-processes the resulting USD to stash
+  the stiffness params as `ariel:*` custom attrs on the root prim
+  (mirroring soft_airframe's `morphy:*`). Schema is in place; the
+  emission half is what's left of the two-layer pattern from §6
+  entry 10.
+* Compliant-arm example (e.g.,
+  `examples/d_drones/17_compliant_quad.py`).
 * Pytest integration test for the Blueprint → URDF → USD pipeline
   (now feasible in-process under the unified env; just needs a
   `pytest.mark.isaaclab` skip-if-not-available guard).
 * (Stretch) Targeted dep pins in pyproject.toml to keep numpy < 2
   and gymnasium == 1.2.1 so isaaclab's pins aren't violated. Defer
   until a downstream isaaclab feature actually breaks.
+* (Stretch) Piecewise-asymmetric stiffness law (10-param `morphy`
+  mode). Add as a second member of the existing `Stiffness` Union;
+  schema is forward-compatible.
 
 ## 6. Design decisions (Phase 3 — URDF / USD backends)
 
@@ -402,6 +420,36 @@ Each entry: **decision** — *why*; alternatives considered.
     conflicts bite elsewhere (RL training, dex_retargeting, etc.)
     they'll need targeted pins in ariel's pyproject.toml; deferred
     until something actually breaks.
+
+16. **Compliant-joint schema lives on `ArmNode` as an `Optional`
+    annotation, not a new node type.** Adding
+    `ArmNode.joint: Optional[CompliantJoint] = None` keeps welded
+    arms (today's behavior) as the default — every existing blueprint
+    still constructs without changes, and emission backends can opt
+    in to handling `arm.joint` when ready. Alternatives considered:
+    (a) a separate `JointNode` child between Arm and Core (forces
+    a tree topology change just to mark a compliant edge; rejected);
+    (b) a flag on `ArmNode` plus loose stiffness fields (no
+    discriminator, hard to evolve as new stiffness laws are added;
+    rejected). The chosen shape is also the natural one for the
+    URDF emission step in §6 entry 10: one URDF `<joint>` per
+    parent-child edge in the tree, where the joint type comes from
+    whether `arm.joint is None`.
+
+    **Stiffness as a discriminated union.** `Stiffness = Union[
+    CappedLinearStiffness]` is a one-member union today (the symmetric
+    capped-linear law matching soft_airframe's `xconfig` mode), with
+    a `type: str = "CappedLinear"` discriminator so `from_dict` can
+    dispatch when the piecewise (`morphy`) law is added. The shape is
+    forward-compatible without a schema migration; new stiffness
+    types are one new dataclass + one new entry in `stiffness_map`.
+
+    **JSON round-trip:** `from_dict` rebuilds `CompliantJoint` and
+    its nested `stiffness` the same way it rebuilds `Pose` and
+    `cross_section`. Tuples (`axis`, `limits_rad`) round-trip
+    correctly because `from_dict` explicitly restores tuple-ness
+    after JSON load — `json.load` returns them as lists, and the
+    dataclass field annotation alone wouldn't coerce them back.
 
 ## 7. Asks for the meeting
 

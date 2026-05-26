@@ -108,6 +108,54 @@ CrossSection = Union[
 ]
 
 
+# ---------- compliant-joint annotations ----------
+#
+# An ArmNode may carry a `joint` annotation describing a passive
+# compliant revolute joint between the arm and its parent. Backends
+# emit a real revolute joint with zero physics stiffness; the
+# non-linear τ(θ) law in `stiffness` is read at runtime by a
+# controller that applies the torque each step. This is the
+# two-layer pattern soft_airframe uses (cf. DRONE_BLUEPRINT_PLAN.md
+# §6 entry 10).
+#
+# v1 supports the symmetric capped-linear law only (matches
+# soft_airframe's `xconfig` mode). Future: piecewise (10-param
+# asymmetric morphy curve) added as another stiffness type once
+# emission backends are wired.
+
+@dataclass
+class CappedLinearStiffness:
+    """Symmetric capped-linear torsional spring law.
+
+        τ(θ) = -max_torque · clamp(θ / saturation_angle, -1, +1)
+
+    Zero at θ=0, linear in θ until ±saturation_angle, then saturates
+    at ±max_torque. Two parameters; matches the `xconfig` mode of
+    soft_airframe's morphy_simulator interpolator.
+    """
+    type: str = "CappedLinear"             # discriminator for from_dict
+    max_torque: float = 0.5                # N·m
+    saturation_angle: float = math.pi / 4  # rad (45°)
+
+
+Stiffness = Union[CappedLinearStiffness]  # union point for future laws
+
+
+@dataclass
+class CompliantJoint:
+    """Passive compliant revolute joint between an ArmNode and its parent.
+
+    Backends emit a revolute joint with zero physics stiffness; the
+    non-linear ``τ(θ)`` law in :attr:`stiffness` is applied at
+    runtime by a controller (or stashed as sidecar attributes in
+    URDF/USD for an Isaac Lab runtime loop to read).
+    """
+    type: str = "Compliant"                                              # discriminator
+    axis: tuple[float, float, float] = (0.0, 0.0, 1.0)                   # rotation axis in arm's local frame
+    limits_rad: tuple[float, float] = (-math.pi / 4, math.pi / 4)        # joint travel limits
+    stiffness: Stiffness = field(default_factory=CappedLinearStiffness)  # non-linear τ(θ) law
+
+
 @dataclass
 class ArmNode:
     type: str = "Arm"
@@ -115,6 +163,7 @@ class ArmNode:
     density: float = 1500.0      # kg/m³ — carbon-fiber-ish
     cross_section: CrossSection = field(default_factory=HollowTubeCrossSection)
     pose: Pose = field(default_factory=Pose)   # attachment frame on parent (CorePlate)
+    joint: Optional[CompliantJoint] = None     # None = welded (default); set for a passive revolute joint
 
     @property
     def mass(self) -> float:
@@ -246,6 +295,9 @@ class DroneBlueprint:
             "HollowTube": HollowTubeCrossSection,
             "Rectangular": RectangularCrossSection,
         }
+        stiffness_map = {
+            "CappedLinear": CappedLinearStiffness,
+        }
         for entry in d["nodes"]:
             data = dict(entry["data"])
             cls_ = type_map[data["type"]]
@@ -257,6 +309,19 @@ class DroneBlueprint:
                 cs_data = dict(data["cross_section"])
                 cs_cls = cross_section_map[cs_data["type"]]
                 data["cross_section"] = cs_cls(**cs_data)
+            # rebuild CompliantJoint (+ nested stiffness) where present
+            if "joint" in data and isinstance(data["joint"], dict):
+                joint_data = dict(data["joint"])
+                # JSON loses tuple-ness; restore so the dataclass receives tuples
+                if "axis" in joint_data and isinstance(joint_data["axis"], list):
+                    joint_data["axis"] = tuple(joint_data["axis"])
+                if "limits_rad" in joint_data and isinstance(joint_data["limits_rad"], list):
+                    joint_data["limits_rad"] = tuple(joint_data["limits_rad"])
+                if "stiffness" in joint_data and isinstance(joint_data["stiffness"], dict):
+                    sd = dict(joint_data["stiffness"])
+                    s_cls = stiffness_map[sd["type"]]
+                    joint_data["stiffness"] = s_cls(**sd)
+                data["joint"] = CompliantJoint(**joint_data)
             payload = cls_(**data)
             bp.g.add_node(entry["id"], data=payload)
             bp._next_id = max(bp._next_id, entry["id"] + 1)
