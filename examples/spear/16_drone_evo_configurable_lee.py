@@ -244,19 +244,19 @@ _gate_cfg = _QuinticGateConfig(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_lee_stack(propellers):
-    """Construct quad + controller + trajectory + gate checker.
+    """Construct drone_property + controller + trajectory + gate checker.
 
-    Returns (quad, ctrl, traj, gate_checker, wind). Raises on bad morphology
+    Returns (drone_property, ctrl, traj, gate_checker, wind). Raises on bad morphology
     (e.g. singular allocation), caller wraps in try/except.
     """
-    quad = DroneInterface(0, propellers=propellers)
+    drone_property = DroneInterface(0, propellers=propellers)
     wind = Wind("None")
     ctrl = LeeGeometricControl(
-        quad, yawType=1, orient="NED", auto_scale_gains=True,
+        drone_property, yawType=1, orient="NED", auto_scale_gains=True,
         pos_P_gain=np.array([LEE_POS_GAIN] * 3),
         vel_P_gain=np.array([LEE_VEL_GAIN] * 3),
     )
-    traj = Trajectory(quad, "xyz_pos", np.array([15, 3, 1]), gate_config=_gate_cfg)
+    traj = Trajectory(drone_property, "xyz_pos", np.array([15, 3, 1]), gate_config=_gate_cfg)
 
     start_pos, _, _ = traj.bspline_trajectory.evaluate(0.0)
     _, vel_050, _   = traj.bspline_trajectory.evaluate(0.05)
@@ -265,23 +265,23 @@ def _build_lee_stack(propellers):
         if np.linalg.norm(vel_050[:2]) > 1e-3
         else float(_gate_cfg.gate_yaw[0])
     )
-    quad.drone_sim.set_state(
+    drone_property.drone_sim.set_state(
         position=start_pos,
         velocity=np.zeros(3),
         attitude=np.array([0.0, 0.0, initial_yaw]),
         angular_velocity=np.zeros(3),
     )
-    quad._update_state_variables()
+    drone_property._update_state_variables()
 
     gate_checker = GateChecker(
         _gate_cfg.gate_pos, _gate_cfg.gate_yaw, _gate_cfg.gate_size,
     )
 
     # Seed first command (same as 3_simulate_lee.py:154-155)
-    sDes = traj.desiredState(0.0, SIM_DT, quad)
-    ctrl.controller(sDes, quad, traj.ctrlType, SIM_DT)
+    sDes = traj.desiredState(0.0, SIM_DT, drone_property)
+    ctrl.controller(sDes, drone_property, traj.ctrlType, SIM_DT)
 
-    return quad, ctrl, traj, gate_checker, wind
+    return drone_property, ctrl, traj, gate_checker, wind
 
 
 def _eval_with_lee(genotype: dict) -> tuple[float, int, dict]:
@@ -309,7 +309,7 @@ def _eval_with_lee(genotype: dict) -> tuple[float, int, dict]:
     n_motors = len(propellers)
 
     try:
-        quad, ctrl, traj, gate_checker, wind = _build_lee_stack(propellers)
+        drone_property, ctrl, traj, gate_checker, wind = _build_lee_stack(propellers)
     except Exception:
         return float("-inf"), n_motors, {"gates": 0, "survival": 0.0, "tracking_err": float("inf")}
 
@@ -320,13 +320,13 @@ def _eval_with_lee(genotype: dict) -> tuple[float, int, dict]:
     try:
         t, i = 0.0, 1
         while i <= n_steps:
-            quad.update(t, SIM_DT, ctrl.w_cmd, wind)
+            drone_property.update(t, SIM_DT, ctrl.w_cmd, wind)
             t_new = SIM_DT * i
-            sDes = traj.desiredState(t_new, SIM_DT, quad)
-            ctrl.controller(sDes, quad, traj.ctrlType, SIM_DT)
-            gate_checker.check_gate_passing(quad.pos)
+            sDes = traj.desiredState(t_new, SIM_DT, drone_property)
+            ctrl.controller(sDes, drone_property, traj.ctrlType, SIM_DT)
+            gate_checker.check_gate_passing(drone_property.pos)
             # sDes[:3] is desired position from the trajectory
-            tracking_sum += float(np.linalg.norm(quad.pos - sDes[:3]))
+            tracking_sum += float(np.linalg.norm(drone_property.pos - sDes[:3]))
             steps_done   += 1
             t = t_new
             i += 1
@@ -503,7 +503,7 @@ try:
     import ariel.simulation.drone.controllers.utils as ctrl_utils
 
     best_propellers = blueprint_to_propellers(best_bp, convention="ned")
-    quad, ctrl, traj, gate_checker, wind = _build_lee_stack(best_propellers)
+    drone_property, ctrl, traj, gate_checker, wind = _build_lee_stack(best_propellers)
 
     n_steps = int(SIM_TIME / SIM_DT) + 1
     t_all          = np.zeros(n_steps)
@@ -514,15 +514,15 @@ try:
     t, i = 0.0, 1
     while i < n_steps:
         t_all[i]         = t
-        pos_all[i]       = quad.pos
-        quat_all[i]      = quad.quat
+        pos_all[i]       = drone_property.pos
+        quat_all[i]      = drone_property.quat
         sDes_traj_all[i] = traj.sDes
 
-        quad.update(t, SIM_DT, ctrl.w_cmd, wind)
+        drone_property.update(t, SIM_DT, ctrl.w_cmd, wind)
         t_new = SIM_DT * i
-        sDes = traj.desiredState(t_new, SIM_DT, quad)
-        ctrl.controller(sDes, quad, traj.ctrlType, SIM_DT)
-        gate_checker.check_gate_passing(quad.pos)
+        sDes = traj.desiredState(t_new, SIM_DT, drone_property)
+        ctrl.controller(sDes, drone_property, traj.ctrlType, SIM_DT)
+        gate_checker.check_gate_passing(drone_property.pos)
 
         t = t_new
         i += 1
@@ -537,7 +537,7 @@ try:
 
     anim = ctrl_utils.sameAxisAnimation(
         t_all, waypoints, pos_all, quat_all, sDes_traj_all, SIM_DT,
-        quad.params, 15, 3, 1, "NED",
+        drone_property.params, 15, 3, 1, "NED",
         gate_pos=np.array(_gate_cfg.gate_pos),
         gate_yaw=np.array(_gate_cfg.gate_yaw),
         gate_size=_gate_cfg.gate_size,
