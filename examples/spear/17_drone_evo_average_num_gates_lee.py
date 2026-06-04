@@ -111,7 +111,7 @@ PARAMETER_LIMITS = np.array([
 
 APPEND_ARM_CHANCE = 0.0
 BILATERAL_SYMMETRY = None
-REPAIR = False
+REPAIR = True
 MUTATION_SCALES = None
 
 CUSTOM_GENERATION_OPS = None
@@ -232,6 +232,7 @@ class _QuinticGateConfig:
 # Genome handler
 # ─────────────────────────────────────────────────────────────────────────────
 
+_PROPELLER_RADIUS = (PROP_SIZE / 2.0) * 0.0254   # inches → metres
 genome_handler = SphericalAngularDroneGenomeHandler(
     min_max_narms=(N_ARMS_MIN, N_ARMS_MAX),
     parameter_limits=PARAMETER_LIMITS,
@@ -240,6 +241,10 @@ genome_handler = SphericalAngularDroneGenomeHandler(
     repair=REPAIR,
     mutation_scales_percentage=MUTATION_SCALES,
     rnd=np.random.default_rng(args.seed),
+    enable_collision_repair=True,
+    propeller_radius=_PROPELLER_RADIUS,
+    inner_boundary_radius=float(PARAMETER_LIMITS[0, 0]),   # 0.055 m
+    outer_boundary_radius=float(PARAMETER_LIMITS[0, 1]),   # 0.17 m
 )
 
 
@@ -250,12 +255,29 @@ genome_handler = SphericalAngularDroneGenomeHandler(
 _all_gate_sets = _multi_quintic_to_gates(
     COEFFS, N_TRAJECTORIES, GATE_PATH_STEPS, GATE_PATH_SCALE, GATE_Z_HEIGHT, seed=args.seed,
 )
+def _start_pos_behind_gate0(gp, gy, offset=1.0):
+    """Place the drone 1 m BEHIND gate 0 along gate 0's yaw normal.
+
+    GateChecker counts a pass when signed_dist (drone − gate · normal) flips
+    from negative to non-negative. Without this, an arbitrary offset (e.g.
+    [0, −1, 0]) puts the drone "in front of" gate 0 for some yaw values,
+    so gate 0 is never crossed and the entire chain is stuck — see the
+    circuits where the canonical hex visually flies through every gate but
+    scored 0 in earlier runs.
+    """
+    gate0 = np.asarray(gp[0], dtype=np.float64)
+    # Unit normal of gate-0 plane in XY; this is the "forward" crossing direction.
+    normal_0 = np.array([np.cos(gy[0]), np.sin(gy[0]), 0.0], dtype=np.float64)
+    normal_0 /= max(np.linalg.norm(normal_0), 1e-12)
+    # Exactly 1 m behind gate-0 centerpoint (perpendicular to the gate plane).
+    return gate0 - float(offset) * normal_0
+
 _all_gate_cfgs = [
     _QuinticGateConfig(
         gate_pos=gp,
         gate_yaw=gy,
         gate_size=GATE_SIZE,
-        starting_pos=gp[0] + np.array([0.0, -1.0, 0.0]),
+        starting_pos=_start_pos_behind_gate0(gp, gy),
     )
     for (gp, gy) in _all_gate_sets
 ]
@@ -280,7 +302,9 @@ def _build_lee_stack(propellers, gate_cfg):
     )
     traj = Trajectory(drone_property, "xyz_pos", np.array([15, 3, 1]), gate_config=gate_cfg)
 
-    start_pos, _, _ = traj.bspline_trajectory.evaluate(0.0)
+    # Always spawn from the configured start pose (1 m behind gate-0), not from
+    # trajectory interpolation output, to preserve gate-crossing semantics.
+    start_pos = np.asarray(gate_cfg.starting_pos, dtype=np.float64)
     _, vel_050, _   = traj.bspline_trajectory.evaluate(0.05)
     initial_yaw = (
         float(np.arctan2(vel_050[1], vel_050[0]))
@@ -298,6 +322,8 @@ def _build_lee_stack(propellers, gate_cfg):
     gate_checker = GateChecker(
         gate_cfg.gate_pos, gate_cfg.gate_yaw, gate_cfg.gate_size,
     )
+    # Seed signed distance at t=0 so a first-step crossing is not missed.
+    gate_checker.check_gate_passing(drone_property.pos)
 
     # Seed first command (same as 3_simulate_lee.py:154-155)
     sDes = traj.desiredState(0.0, SIM_DT, drone_property)
@@ -719,17 +745,20 @@ try:
         n_gates   = gate_checker.num_gates
         pos_ned   = np.zeros((max_steps, 3), dtype=np.float64)
         euler_log = np.zeros((max_steps, 3), dtype=np.float64)
-        t, i = 0.0, 1
+        # Seed signed distance at t=0 so first-step crossing is counted correctly.
+        gate_checker.check_gate_passing(drone_property.pos)
+        t, i = 0.0, 0
         try:
             while i < max_steps:
                 pos_ned[i]   = drone_property.pos
                 euler_log[i] = drone_property.euler
                 drone_property.update(t, SIM_DT, ctrl.w_cmd, wind)
-                t_new = SIM_DT * i
+                t_new = SIM_DT * (i + 1)
                 sDes  = traj.desiredState(t_new, SIM_DT, drone_property)
                 ctrl.controller(sDes, drone_property, traj.ctrlType, SIM_DT)
                 gate_checker.check_gate_passing(drone_property.pos)
-                t = t_new; i += 1
+                t = t_new
+                i += 1
                 if gate_checker.gates_passed >= n_gates:
                     break
         except Exception:
