@@ -135,7 +135,13 @@ GATE_Z_HEIGHT   = -1.5  # NED z (metres)
 #  CONFIG 3 — LEE CONTROLLER
 # ═════════════════════════════════════════════════════════════════════════════
 
-SIM_TIME     = 20.0    # seconds per rollout (per circuit)
+SIM_TIME     = 8.0     # seconds per rollout (per circuit; rollout breaks early at last gate).
+                       # > TRAJ_TOTAL_TIME with a margin to cross the final gate; kept short
+                       # so survival/completion fitness terms stay meaningful and failed
+                       # rollouts don't waste compute on post-course flight.
+TRAJ_TOTAL_TIME = 5.0  # open-spline traversal time — the course is flown in this many
+                       # seconds (matches rerender_oblique). Evaluate drones at the same
+                       # pace they are visualised at. SIM_TIME only needs to exceed this.
 SIM_DT       = 0.005   # integration timestep
 LEE_POS_GAIN = 14.3    # position P gain (default from 3_simulate_lee.py)
 LEE_VEL_GAIN = 9.0     # velocity P gain (default from 3_simulate_lee.py)
@@ -226,6 +232,10 @@ class _QuinticGateConfig:
         self.gate_yaw     = np.asarray(gate_yaw)
         self.gate_size    = float(gate_size)
         self.starting_pos = np.asarray(starting_pos)
+        # Open (clamped) B-spline, run once gate 0 -> last gate (not a closed
+        # loop). Matches rerender_oblique; the rollout breaks at the final gate.
+        # Trajectory reads this via getattr(gate_config, "periodic", True).
+        self.periodic     = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,21 +265,34 @@ genome_handler = SphericalAngularDroneGenomeHandler(
 _all_gate_sets = _multi_quintic_to_gates(
     COEFFS, N_TRAJECTORIES, GATE_PATH_STEPS, GATE_PATH_SCALE, GATE_Z_HEIGHT, seed=args.seed,
 )
-def _start_pos_behind_gate0(gp, gy, offset=1.0):
-    """Place the drone 1 m BEHIND gate 0 along gate 0's yaw normal.
+def _gate0_course_normal(gate_pos, gate_yaw):
+    """Unit XY direction of the first course leg (gate 0 -> gate 1).
 
-    GateChecker now counts a pass when the trajectory segment intersects the
-    gate opening (frame-intersection, direction-agnostic — see
-    examples/d_drones/_ctrl_helpers.py), so the start side no longer determines
-    whether gate 0 registers. This 1 m-behind offset is kept anyway to give a
-    clean straight fly-in to gate 0 rather than spawning on top of it.
+    Used for both the spawn offset and the initial heading so the fly-in is a
+    straight shot along the first leg. Falls back to gate-0 yaw if only one gate.
+    """
+    gp = np.asarray(gate_pos, dtype=np.float64)
+    if len(gp) > 1:
+        v = gp[1] - gp[0]
+        v[2] = 0.0
+        n = float(np.linalg.norm(v))
+        if n > 1e-9:
+            return v / n
+    gy0 = float(np.asarray(gate_yaw)[0])
+    return np.array([np.cos(gy0), np.sin(gy0), 0.0], dtype=np.float64)
+
+
+def _start_pos_behind_gate0(gp, gy, offset=1.0):
+    """Place the drone 1 m BEHIND gate 0 along the first course leg (gate0->gate1).
+
+    Matches rerender_oblique: aligning the fly-in with the course (rather than
+    the gate-0 yaw normal) keeps the lateral error small entering gate 0 on
+    circuits where the gate yaw is not aligned with the course. The frame-
+    intersection GateChecker is direction-agnostic, so the start side no longer
+    determines whether gate 0 registers.
     """
     gate0 = np.asarray(gp[0], dtype=np.float64)
-    # Unit normal of gate-0 plane in XY; this is the "forward" crossing direction.
-    normal_0 = np.array([np.cos(gy[0]), np.sin(gy[0]), 0.0], dtype=np.float64)
-    normal_0 /= max(np.linalg.norm(normal_0), 1e-12)
-    # Exactly 1 m behind gate-0 centerpoint (perpendicular to the gate plane).
-    return gate0 - float(offset) * normal_0
+    return gate0 - float(offset) * _gate0_course_normal(gp, gy)
 
 _all_gate_cfgs = [
     _QuinticGateConfig(
@@ -300,16 +323,17 @@ def _build_lee_stack(propellers, gate_cfg):
         vel_P_gain=np.array([LEE_VEL_GAIN] * 3),
     )
     traj = Trajectory(drone_property, "xyz_pos", np.array([15, 3, 1]), gate_config=gate_cfg)
+    # Fly the whole (open) course in TRAJ_TOTAL_TIME seconds (matches
+    # rerender_oblique). The non-periodic spline reaches the final gate at
+    # total_time; SIM_TIME only needs to exceed it (the rollout breaks early).
+    traj.bspline_trajectory.total_time = TRAJ_TOTAL_TIME
 
-    # Always spawn from the configured start pose (1 m behind gate-0), not from
-    # trajectory interpolation output, to preserve gate-crossing semantics.
+    # Always spawn from the configured start pose (1 m behind gate-0 along the
+    # first course leg), facing along that leg — not from trajectory output — to
+    # preserve gate-crossing semantics and match rerender_oblique.
     start_pos = np.asarray(gate_cfg.starting_pos, dtype=np.float64)
-    _, vel_050, _   = traj.bspline_trajectory.evaluate(0.05)
-    initial_yaw = (
-        float(np.arctan2(vel_050[1], vel_050[0]))
-        if np.linalg.norm(vel_050[:2]) > 1e-3
-        else float(gate_cfg.gate_yaw[0])
-    )
+    incoming_heading = _gate0_course_normal(gate_cfg.gate_pos, gate_cfg.gate_yaw)
+    initial_yaw = float(np.arctan2(incoming_heading[1], incoming_heading[0]))
     drone_property.drone_sim.set_state(
         position=start_pos,
         velocity=np.zeros(3),
