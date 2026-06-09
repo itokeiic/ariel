@@ -258,12 +258,11 @@ _all_gate_sets = _multi_quintic_to_gates(
 def _start_pos_behind_gate0(gp, gy, offset=1.0):
     """Place the drone 1 m BEHIND gate 0 along gate 0's yaw normal.
 
-    GateChecker counts a pass when signed_dist (drone − gate · normal) flips
-    from negative to non-negative. Without this, an arbitrary offset (e.g.
-    [0, −1, 0]) puts the drone "in front of" gate 0 for some yaw values,
-    so gate 0 is never crossed and the entire chain is stuck — see the
-    circuits where the canonical hex visually flies through every gate but
-    scored 0 in earlier runs.
+    GateChecker now counts a pass when the trajectory segment intersects the
+    gate opening (frame-intersection, direction-agnostic — see
+    examples/d_drones/_ctrl_helpers.py), so the start side no longer determines
+    whether gate 0 registers. This 1 m-behind offset is kept anyway to give a
+    clean straight fly-in to gate 0 rather than spawning on top of it.
     """
     gate0 = np.asarray(gp[0], dtype=np.float64)
     # Unit normal of gate-0 plane in XY; this is the "forward" crossing direction.

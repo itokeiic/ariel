@@ -161,9 +161,10 @@ def build_lee_stack(propellers, gate_cfg):
         angular_velocity=np.zeros(3),
     )
     drone._update_state_variables()
-    checker = GateChecker(gate_cfg.gate_pos, gate_cfg.gate_yaw, gate_cfg.gate_size)
-    # Seed signed-distance state at t=0 so a first-step crossing is not missed.
-    check_gate_passing_eps(checker, drone)
+    checker = GateChecker(gate_cfg.gate_pos, gate_cfg.gate_yaw, gate_cfg.gate_size,
+                          eps=GATE_PLANE_EPS, proximity_radius=GATE_PROXIMITY_RADIUS)
+    # Seed prev-position state at t=0 so a first-step crossing is not missed.
+    checker.check_gate_passing(drone.pos)
     sDes = traj.desiredState(0.0, SIM_DT, drone)
     ctrl.controller(sDes, drone, traj.ctrlType, SIM_DT)
     return drone, ctrl, traj, checker, wind
@@ -186,7 +187,7 @@ def logged_rollout(propellers, gate_cfg, max_steps, debug_trace=False):
             sDes = traj.desiredState(t_new, SIM_DT, drone)
             ctrl.controller(sDes, drone, traj.ctrlType, SIM_DT)
 
-            passed, info = check_gate_passing_eps(checker, drone, return_info=True)
+            passed, info = checker.check_gate_passing(drone.pos, return_info=True)
 
             if debug_trace:
                 gate_debug_rows.append({
@@ -242,125 +243,133 @@ def horizontal_alignment_error_deg_to_incoming(drone_forward, gate_normal):
     return abs(180.0 - angle_to_normal)
 
 
-def _course_aligned_normal(checker, gate_index):
-    """Gate-plane normal oriented along the local course direction (gate i ->
-    i+1). gate_yaw alone is sometimes anti-aligned with the course; orienting it
-    keeps a single forward pass crossing the plane in a consistent sense and
-    leaves the opening geometry (lateral/vertical errors) unchanged."""
-    gate_p = np.asarray(checker.gate_pos[gate_index], dtype=np.float64)
-    gate_y = float(checker.gate_yaw[gate_index])
-    normal = np.array([np.cos(gate_y), np.sin(gate_y), 0.0], dtype=np.float64)
-    _gps = checker.gate_pos
-    if gate_index < len(_gps) - 1:
-        _course = np.asarray(_gps[gate_index + 1], dtype=np.float64) - gate_p
-    else:
-        _course = gate_p - np.asarray(_gps[gate_index - 1], dtype=np.float64)
-    if float(np.dot(normal[:2], _course[:2])) < 0.0:
-        normal = -normal
-    return gate_p, normal
-
-
-def _frame_errs(pt, gate_p, normal):
-    """Signed plane distance + in-opening lateral / vertical offsets of a point."""
-    s = float(np.dot(pt - gate_p, normal))
-    lat = float(np.linalg.norm(pt[:2] - gate_p[:2] - s * normal[:2]))
-    vert = float(abs(pt[2] - gate_p[2]))
-    return s, lat, vert
-
-
-def check_gate_passing_eps(checker, drone, eps=GATE_PLANE_EPS, return_info=False):
-    """Frame-based gate-pass detector (direction-agnostic, step-size robust).
-
-    A gate counts as passed when the drone's trajectory segment between the
-    previous and current sample intersects the gate plane *inside* the ±0.5 m
-    opening — regardless of crossing direction.
-
-    This replaces the strict one-directional (- -> +) crossing test, which
-    locked the sequential checker on densely spaced courses: the drone is often
-    already on the far side of gate i's plane by the time gate i becomes the
-    active target, so a - -> + crossing never recurs and every later gate is
-    frozen out (e.g. circuit 04 gate 13, circuit 07 gate 3) even though the drone
-    flew dead-centre through the opening. Intersecting the segment with the
-    opening counts the actual fly-through; a catch-up loop advances through every
-    gate a single segment clears (handles gates crossed within one step of each
-    other). No centre-radius proximity hack is required.
-    """
-    pos = np.asarray(drone.pos, dtype=np.float64)
-    prev_pos = getattr(checker, "_prev_pos", None)
-    entry_gate = int(checker._next_gate)
-
-    passed_any = False
-    info_signed = info_lat = info_vert = info_orient = None
-    info_crossed = False
-
-    # Walk the current segment [prev_pos, pos] against the active gate, advancing
-    # through every gate whose opening the segment passes through (catch-up).
-    while checker._next_gate < checker.num_gates:
-        gi = int(checker._next_gate)
-        gate_p, normal = _course_aligned_normal(checker, gi)
-        s_cur = float(np.dot(pos - gate_p, normal))
-        if info_signed is None:
-            info_signed = s_cur
-        if prev_pos is None:
-            break  # need a previous sample to form a segment
-
-        s_prev = float(np.dot(prev_pos - gate_p, normal))
-        hit = False
-
-        # Primary: does the segment straddle the plane (any direction)?
-        if (s_prev <= 0.0 <= s_cur) or (s_cur <= 0.0 <= s_prev):
-            info_crossed = True
-            denom = s_prev - s_cur
-            f = min(max((s_prev / denom) if denom != 0.0 else 0.0, 0.0), 1.0)
-            cross_pt = prev_pos + f * (pos - prev_pos)
-            _, lat, vert = _frame_errs(cross_pt, gate_p, normal)
-            if lat <= checker.gate_size / 2.0 and vert <= checker.gate_size / 2.0:
-                hit = True
-                info_lat, info_vert = lat, vert
-                info_orient = horizontal_alignment_error_deg_to_incoming(
-                    drone_forward_axis_world(drone), normal)
-
-        # Grazing fallback: a sample sits inside the opening essentially on the
-        # plane without a clean straddle (sampling artefact on a tangential pass).
-        if not hit:
-            _, lat_now, vert_now = _frame_errs(pos, gate_p, normal)
-            if (abs(s_cur) <= float(eps)
-                    and lat_now <= checker.gate_size / 2.0
-                    and vert_now <= checker.gate_size / 2.0):
-                hit = True
-                info_lat, info_vert = lat_now, vert_now
-
-        # Legacy centre-radius proximity fallback (no-op while radius is 0).
-        if not hit and GATE_PROXIMITY_RADIUS > 0.0:
-            if float(np.linalg.norm(pos - gate_p)) <= GATE_PROXIMITY_RADIUS:
-                hit = True
-                _, info_lat, info_vert = _frame_errs(pos, gate_p, normal)
-
-        if not hit:
-            break
-
-        checker.gates_passed += 1
-        checker._next_gate = (checker._next_gate + 1) % checker.num_gates
-        passed_any = True
-        if checker._next_gate == 0:  # wrapped -> non-periodic course complete
-            break
-
-    checker._prev_pos = pos
-    checker._prev_signed_dist = info_signed  # kept for any external readers
-
-    if return_info:
-        return passed_any, {
-            "gate_index_checked": entry_gate,
-            "prev_signed_dist": None,
-            "signed_dist": info_signed,
-            "crossed_plane": bool(info_crossed),
-            "lateral_err": info_lat,
-            "vertical_err": info_vert,
-            "orientation_err_deg": info_orient,
-            "passed": bool(passed_any),
-            "next_gate_after": int(checker._next_gate),
-        }
-    return passed_any
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPRECATED (commented out 2026-06-09): the frame-intersection detector below
+# was ported into the shared examples/d_drones/_ctrl_helpers.py GateChecker, and
+# this script now delegates to checker.check_gate_passing(...) instead. Kept here
+# (commented) for reference — re-enable if a rerender-only variant is needed.
+# The only capability the shared method lacks is orientation_err_deg (it sees
+# position only, not heading), so the debug CSV's orientation column is now blank.
+#
+# def _course_aligned_normal(checker, gate_index):
+#     """Gate-plane normal oriented along the local course direction (gate i ->
+#     i+1). gate_yaw alone is sometimes anti-aligned with the course; orienting it
+#     keeps a single forward pass crossing the plane in a consistent sense and
+#     leaves the opening geometry (lateral/vertical errors) unchanged."""
+#     gate_p = np.asarray(checker.gate_pos[gate_index], dtype=np.float64)
+#     gate_y = float(checker.gate_yaw[gate_index])
+#     normal = np.array([np.cos(gate_y), np.sin(gate_y), 0.0], dtype=np.float64)
+#     _gps = checker.gate_pos
+#     if gate_index < len(_gps) - 1:
+#         _course = np.asarray(_gps[gate_index + 1], dtype=np.float64) - gate_p
+#     else:
+#         _course = gate_p - np.asarray(_gps[gate_index - 1], dtype=np.float64)
+#     if float(np.dot(normal[:2], _course[:2])) < 0.0:
+#         normal = -normal
+#     return gate_p, normal
+#
+#
+# def _frame_errs(pt, gate_p, normal):
+#     """Signed plane distance + in-opening lateral / vertical offsets of a point."""
+#     s = float(np.dot(pt - gate_p, normal))
+#     lat = float(np.linalg.norm(pt[:2] - gate_p[:2] - s * normal[:2]))
+#     vert = float(abs(pt[2] - gate_p[2]))
+#     return s, lat, vert
+#
+#
+# def check_gate_passing_eps(checker, drone, eps=GATE_PLANE_EPS, return_info=False):
+#     """Frame-based gate-pass detector (direction-agnostic, step-size robust).
+#
+#     A gate counts as passed when the drone's trajectory segment between the
+#     previous and current sample intersects the gate plane *inside* the ±0.5 m
+#     opening — regardless of crossing direction.
+#
+#     This replaces the strict one-directional (- -> +) crossing test, which
+#     locked the sequential checker on densely spaced courses: the drone is often
+#     already on the far side of gate i's plane by the time gate i becomes the
+#     active target, so a - -> + crossing never recurs and every later gate is
+#     frozen out (e.g. circuit 04 gate 13, circuit 07 gate 3) even though the drone
+#     flew dead-centre through the opening. Intersecting the segment with the
+#     opening counts the actual fly-through; a catch-up loop advances through every
+#     gate a single segment clears (handles gates crossed within one step of each
+#     other). No centre-radius proximity hack is required.
+#     """
+#     pos = np.asarray(drone.pos, dtype=np.float64)
+#     prev_pos = getattr(checker, "_prev_pos", None)
+#     entry_gate = int(checker._next_gate)
+#
+#     passed_any = False
+#     info_signed = info_lat = info_vert = info_orient = None
+#     info_crossed = False
+#
+#     # Walk the current segment [prev_pos, pos] against the active gate, advancing
+#     # through every gate whose opening the segment passes through (catch-up).
+#     while checker._next_gate < checker.num_gates:
+#         gi = int(checker._next_gate)
+#         gate_p, normal = _course_aligned_normal(checker, gi)
+#         s_cur = float(np.dot(pos - gate_p, normal))
+#         if info_signed is None:
+#             info_signed = s_cur
+#         if prev_pos is None:
+#             break  # need a previous sample to form a segment
+#
+#         s_prev = float(np.dot(prev_pos - gate_p, normal))
+#         hit = False
+#
+#         # Primary: does the segment straddle the plane (any direction)?
+#         if (s_prev <= 0.0 <= s_cur) or (s_cur <= 0.0 <= s_prev):
+#             info_crossed = True
+#             denom = s_prev - s_cur
+#             f = min(max((s_prev / denom) if denom != 0.0 else 0.0, 0.0), 1.0)
+#             cross_pt = prev_pos + f * (pos - prev_pos)
+#             _, lat, vert = _frame_errs(cross_pt, gate_p, normal)
+#             if lat <= checker.gate_size / 2.0 and vert <= checker.gate_size / 2.0:
+#                 hit = True
+#                 info_lat, info_vert = lat, vert
+#                 info_orient = horizontal_alignment_error_deg_to_incoming(
+#                     drone_forward_axis_world(drone), normal)
+#
+#         # Grazing fallback: a sample sits inside the opening essentially on the
+#         # plane without a clean straddle (sampling artefact on a tangential pass).
+#         if not hit:
+#             _, lat_now, vert_now = _frame_errs(pos, gate_p, normal)
+#             if (abs(s_cur) <= float(eps)
+#                     and lat_now <= checker.gate_size / 2.0
+#                     and vert_now <= checker.gate_size / 2.0):
+#                 hit = True
+#                 info_lat, info_vert = lat_now, vert_now
+#
+#         # Legacy centre-radius proximity fallback (no-op while radius is 0).
+#         if not hit and GATE_PROXIMITY_RADIUS > 0.0:
+#             if float(np.linalg.norm(pos - gate_p)) <= GATE_PROXIMITY_RADIUS:
+#                 hit = True
+#                 _, info_lat, info_vert = _frame_errs(pos, gate_p, normal)
+#
+#         if not hit:
+#             break
+#
+#         checker.gates_passed += 1
+#         checker._next_gate = (checker._next_gate + 1) % checker.num_gates
+#         passed_any = True
+#         if checker._next_gate == 0:  # wrapped -> non-periodic course complete
+#             break
+#
+#     checker._prev_pos = pos
+#     checker._prev_signed_dist = info_signed  # kept for any external readers
+#
+#     if return_info:
+#         return passed_any, {
+#             "gate_index_checked": entry_gate,
+#             "prev_signed_dist": None,
+#             "signed_dist": info_signed,
+#             "crossed_plane": bool(info_crossed),
+#             "lateral_err": info_lat,
+#             "vertical_err": info_vert,
+#             "orientation_err_deg": info_orient,
+#             "passed": bool(passed_any),
+#             "next_gate_after": int(checker._next_gate),
+#         }
+#     return passed_any
 
 
 def write_gate_debug_csv(run_dir, run_tag, circuit_idx, label_name, rows):

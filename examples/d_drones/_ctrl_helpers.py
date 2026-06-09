@@ -92,12 +92,22 @@ class GateChecker:
         vert = float(abs(pt[2] - gate_p[2]))
         return s, lat, vert
 
-    def check_gate_passing(self, pos: np.ndarray) -> bool:
-        """Update with a new sample; return True if >=1 gate was just passed."""
+    def check_gate_passing(self, pos: np.ndarray, return_info: bool = False):
+        """Update with a new sample; return True if >=1 gate was just passed.
+
+        With ``return_info=True`` returns ``(passed, info_dict)`` for debug
+        logging. ``orientation_err_deg`` is always None here (this method only
+        sees position, not heading); callers needing it must compute it.
+        """
         pos = np.asarray(pos, dtype=np.float64)
         prev_pos = self._prev_pos
         half = self.gate_size / 2.0
         passed_any = False
+        entry_gate = int(self._next_gate)
+        info_signed: float | None = None
+        info_lat: float | None = None
+        info_vert: float | None = None
+        info_crossed = False
 
         # Walk the current segment [prev_pos, pos] against the active gate,
         # advancing through every in-order gate whose opening it passes through.
@@ -105,6 +115,8 @@ class GateChecker:
             gate_p, normal = self._gate_normal(self._next_gate)
             s_cur = float(np.dot(pos - gate_p, normal))
             self._prev_signed_dist = s_cur
+            if info_signed is None:
+                info_signed = s_cur
             if prev_pos is None:
                 break  # need a previous sample to form a segment
 
@@ -113,23 +125,27 @@ class GateChecker:
 
             # Primary: does the segment straddle the plane (any direction)?
             if (s_prev <= 0.0 <= s_cur) or (s_cur <= 0.0 <= s_prev):
+                info_crossed = True
                 denom = s_prev - s_cur
                 f = min(max((s_prev / denom) if denom != 0.0 else 0.0, 0.0), 1.0)
                 cross_pt = prev_pos + f * (pos - prev_pos)
                 _, lat, vert = self._frame_errs(cross_pt, gate_p, normal)
                 if lat <= half and vert <= half:
                     hit = True
+                    info_lat, info_vert = lat, vert
 
             # Grazing fallback: a sample inside the opening, on the plane.
             if not hit:
                 _, lat_now, vert_now = self._frame_errs(pos, gate_p, normal)
                 if abs(s_cur) <= self.eps and lat_now <= half and vert_now <= half:
                     hit = True
+                    info_lat, info_vert = lat_now, vert_now
 
             # Optional centre-radius proximity fallback (off when radius is 0).
             if not hit and self.proximity_radius > 0.0:
                 if float(np.linalg.norm(pos - gate_p)) <= self.proximity_radius:
                     hit = True
+                    _, info_lat, info_vert = self._frame_errs(pos, gate_p, normal)
 
             if not hit:
                 break
@@ -141,6 +157,18 @@ class GateChecker:
                 break
 
         self._prev_pos = pos
+        if return_info:
+            return passed_any, {
+                "gate_index_checked": entry_gate,
+                "prev_signed_dist": None,
+                "signed_dist": info_signed,
+                "crossed_plane": bool(info_crossed),
+                "lateral_err": info_lat,
+                "vertical_err": info_vert,
+                "orientation_err_deg": None,
+                "passed": bool(passed_any),
+                "next_gate_after": int(self._next_gate),
+            }
         return passed_any
 
     def get_normalized_distance_to_next_gate(self, pos: np.ndarray) -> float:
