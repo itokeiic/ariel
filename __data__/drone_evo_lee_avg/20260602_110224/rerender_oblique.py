@@ -36,15 +36,15 @@ from ariel.utils.video_recorder import VideoRecorder
 # ── settings (match example 17) ──────────────────────────────────────────────
 RUN_DIR        = Path(__file__).parent
 RUN_TAG        = "20260602_110224"
-TRAJ_TOTAL_TIME = 20.0   # open-spline traversal time (gentle pace gives a clean gate-0 fly-in)
-SIM_TIME       = 24.0    # rollout window > TRAJ_TOTAL_TIME so the final gate (reached ~t=TRAJ_TOTAL_TIME) is crossed before the rollout ends; terminates early at the last gate anyway
+TRAJ_TOTAL_TIME = 5.0   # open-spline traversal time (gentle pace gives a clean gate-0 fly-in)
+SIM_TIME       = 20.0    # rollout window > TRAJ_TOTAL_TIME so the final gate (reached ~t=TRAJ_TOTAL_TIME) is crossed before the rollout ends; terminates early at the last gate anyway
 SIM_DT         = 0.005
 LEE_POS_GAIN   = 14.3
 LEE_VEL_GAIN   = 9.0
 GATE_SIZE      = 1.0
 GATE_PLANE_EPS = 0.02   # 2 cm tolerance for near-plane crossing in rerender
 GATE_ORIENTATION_TOL_DEG = 5.0
-GATE_PROXIMITY_RADIUS = 0.15   # m; proximity-fallback pass radius for hairpin/overlapping gates (well inside the 0.5 m half-opening)
+GATE_PROXIMITY_RADIUS = 0.0   # m; proximity-fallback pass radius for hairpin/overlapping gates (well inside the 0.5 m half-opening)
 WRITE_GATE_DEBUG_CSV = True
 DEBUG_GATE_CSV_CIRCUIT = 0  # zero-based circuit index; 0 -> circuit 1/10
 FORCE_STRAIGHT_GATE0_APPROACH = True
@@ -55,7 +55,7 @@ CANONICAL_ARM_LEN = 0.5 * (0.055 + 0.17)   # midpoint of PARAMETER_LIMITS[0]
 
 # ── NEW camera — TOP-DOWN view ───────────────────────────────────────────────
 CAM_AZIMUTH   = 90.0    # azimuth largely irrelevant when looking straight down
-CAM_ELEVATION = -89.0   # nearly straight down (avoid −90° gimbal lock)
+CAM_ELEVATION = -85.0   # nearly straight down (avoid −90° gimbal lock)
 CAM_DISTANCE  = 18.0    # tighter zoom; circuit fits at this height
 CAM_LOOKAT    = np.array([0.0, 0.0, 0.0])
 START_HOLD_FRAMES = 30  # hold first frame per circuit (~1s at 30 fps)
@@ -242,114 +242,125 @@ def horizontal_alignment_error_deg_to_incoming(drone_forward, gate_normal):
     return abs(180.0 - angle_to_normal)
 
 
-def check_gate_passing_eps(checker, drone, eps=GATE_PLANE_EPS, return_info=False):
-    """GateChecker equivalent with a small signed-distance tolerance.
-
-    Some bodies approach the gate plane and remain marginally negative due to
-    controller equilibrium, which causes strict crossing to undercount passes
-    in visualization rollouts. This keeps the same geometric logic while
-    allowing an epsilon-wide crossing band.
-    """
-    if checker._next_gate >= checker.num_gates:
-        if return_info:
-            return False, {
-                "gate_index_checked": int(checker._next_gate),
-                "prev_signed_dist": None,
-                "signed_dist": None,
-                "crossed_plane": False,
-                "lateral_err": None,
-                "vertical_err": None,
-                "orientation_err_deg": None,
-                "passed": False,
-                "next_gate_after": int(checker._next_gate),
-            }
-        return False
-
-    pos = np.asarray(drone.pos, dtype=np.float64)
-    gate_index_checked = int(checker._next_gate)
-    gate_p = checker.gate_pos[gate_index_checked]
-    gate_y = checker.gate_yaw[gate_index_checked]
+def _course_aligned_normal(checker, gate_index):
+    """Gate-plane normal oriented along the local course direction (gate i ->
+    i+1). gate_yaw alone is sometimes anti-aligned with the course; orienting it
+    keeps a single forward pass crossing the plane in a consistent sense and
+    leaves the opening geometry (lateral/vertical errors) unchanged."""
+    gate_p = np.asarray(checker.gate_pos[gate_index], dtype=np.float64)
+    gate_y = float(checker.gate_yaw[gate_index])
     normal = np.array([np.cos(gate_y), np.sin(gate_y), 0.0], dtype=np.float64)
-    # Orient the gate-plane normal along the local course direction (gate i ->
-    # i+1) so a single forward pass always crosses the plane in the - -> +
-    # sense. gate_yaw alone is sometimes anti-aligned with the course; without
-    # this, a one-pass (non-looping) run would cross those gates the "wrong" way
-    # and never register. Flipping the sign keeps the plane/opening geometry
-    # identical (signed_dist and normal both flip, so lateral_err is unchanged).
     _gps = checker.gate_pos
-    if gate_index_checked < len(_gps) - 1:
-        _course = np.asarray(_gps[gate_index_checked + 1], dtype=np.float64) - np.asarray(gate_p, dtype=np.float64)
+    if gate_index < len(_gps) - 1:
+        _course = np.asarray(_gps[gate_index + 1], dtype=np.float64) - gate_p
     else:
-        _course = np.asarray(gate_p, dtype=np.float64) - np.asarray(_gps[gate_index_checked - 1], dtype=np.float64)
+        _course = gate_p - np.asarray(_gps[gate_index - 1], dtype=np.float64)
     if float(np.dot(normal[:2], _course[:2])) < 0.0:
         normal = -normal
+    return gate_p, normal
 
-    prev_signed = (None if checker._prev_signed_dist is None
-                   else float(checker._prev_signed_dist))
-    signed_dist = float(np.dot(pos - gate_p, normal))
-    crossed = (
-        checker._prev_signed_dist is not None
-        and checker._prev_signed_dist < -float(eps)
-        and signed_dist >= -float(eps)
-    )
-    checker._prev_signed_dist = signed_dist
-    lateral_err = None
-    vertical_err = None
-    orientation_err_deg = None
-    passed = False
 
-    if crossed:
-        lateral_err = np.linalg.norm(pos[:2] - gate_p[:2] - signed_dist * normal[:2])
-        vertical_err = abs(float(pos[2] - gate_p[2]))
-        drone_forward = drone_forward_axis_world(drone)
-        # Orientation is still computed for the debug logs, but it is NOT a pass
-        # criterion: with B-spline tracking the drone flies cleanly through the
-        # opening yet faces the path tangent (off the gate normal by up to ~12deg
-        # at the spawn fly-in), which the strict 5deg gate would reject — and the
-        # sequential checker would then stick forever on gate 0. A pass therefore
-        # only requires flying through the gate opening (lateral + vertical).
-        orientation_err_deg = horizontal_alignment_error_deg_to_incoming(drone_forward, normal)
-        if (lateral_err <= checker.gate_size / 2.0
-                and vertical_err <= checker.gate_size / 2.0):
-            checker.gates_passed += 1
-            checker._next_gate = (checker._next_gate + 1) % checker.num_gates
-            checker._prev_signed_dist = None
-            passed = True
+def _frame_errs(pt, gate_p, normal):
+    """Signed plane distance + in-opening lateral / vertical offsets of a point."""
+    s = float(np.dot(pt - gate_p, normal))
+    lat = float(np.linalg.norm(pt[:2] - gate_p[:2] - s * normal[:2]))
+    vert = float(abs(pt[2] - gate_p[2]))
+    return s, lat, vert
 
-    if not passed:
-        # Proximity fallback for hairpin / tightly-overlapping gates. On switchback
-        # circuits the drone reaches a gate's centre and reverses, so it is already
-        # on the far side of the plane when that gate becomes the target and never
-        # makes a clean -> + crossing (the checker then sticks). Count a pass when
-        # the drone comes within a small radius of the gate centre — i.e. it flew
-        # essentially through the middle of the opening — regardless of crossing
-        # direction. The radius is well inside the opening so it cannot trigger for
-        # a drone that misses the gate.
-        dist_center = float(np.linalg.norm(pos - gate_p))
-        if dist_center <= GATE_PROXIMITY_RADIUS:
-            if lateral_err is None:
-                lateral_err = np.linalg.norm(pos[:2] - gate_p[:2] - signed_dist * normal[:2])
-                vertical_err = abs(float(pos[2] - gate_p[2]))
-            checker.gates_passed += 1
-            checker._next_gate = (checker._next_gate + 1) % checker.num_gates
-            checker._prev_signed_dist = None
-            passed = True
+
+def check_gate_passing_eps(checker, drone, eps=GATE_PLANE_EPS, return_info=False):
+    """Frame-based gate-pass detector (direction-agnostic, step-size robust).
+
+    A gate counts as passed when the drone's trajectory segment between the
+    previous and current sample intersects the gate plane *inside* the ±0.5 m
+    opening — regardless of crossing direction.
+
+    This replaces the strict one-directional (- -> +) crossing test, which
+    locked the sequential checker on densely spaced courses: the drone is often
+    already on the far side of gate i's plane by the time gate i becomes the
+    active target, so a - -> + crossing never recurs and every later gate is
+    frozen out (e.g. circuit 04 gate 13, circuit 07 gate 3) even though the drone
+    flew dead-centre through the opening. Intersecting the segment with the
+    opening counts the actual fly-through; a catch-up loop advances through every
+    gate a single segment clears (handles gates crossed within one step of each
+    other). No centre-radius proximity hack is required.
+    """
+    pos = np.asarray(drone.pos, dtype=np.float64)
+    prev_pos = getattr(checker, "_prev_pos", None)
+    entry_gate = int(checker._next_gate)
+
+    passed_any = False
+    info_signed = info_lat = info_vert = info_orient = None
+    info_crossed = False
+
+    # Walk the current segment [prev_pos, pos] against the active gate, advancing
+    # through every gate whose opening the segment passes through (catch-up).
+    while checker._next_gate < checker.num_gates:
+        gi = int(checker._next_gate)
+        gate_p, normal = _course_aligned_normal(checker, gi)
+        s_cur = float(np.dot(pos - gate_p, normal))
+        if info_signed is None:
+            info_signed = s_cur
+        if prev_pos is None:
+            break  # need a previous sample to form a segment
+
+        s_prev = float(np.dot(prev_pos - gate_p, normal))
+        hit = False
+
+        # Primary: does the segment straddle the plane (any direction)?
+        if (s_prev <= 0.0 <= s_cur) or (s_cur <= 0.0 <= s_prev):
+            info_crossed = True
+            denom = s_prev - s_cur
+            f = min(max((s_prev / denom) if denom != 0.0 else 0.0, 0.0), 1.0)
+            cross_pt = prev_pos + f * (pos - prev_pos)
+            _, lat, vert = _frame_errs(cross_pt, gate_p, normal)
+            if lat <= checker.gate_size / 2.0 and vert <= checker.gate_size / 2.0:
+                hit = True
+                info_lat, info_vert = lat, vert
+                info_orient = horizontal_alignment_error_deg_to_incoming(
+                    drone_forward_axis_world(drone), normal)
+
+        # Grazing fallback: a sample sits inside the opening essentially on the
+        # plane without a clean straddle (sampling artefact on a tangential pass).
+        if not hit:
+            _, lat_now, vert_now = _frame_errs(pos, gate_p, normal)
+            if (abs(s_cur) <= float(eps)
+                    and lat_now <= checker.gate_size / 2.0
+                    and vert_now <= checker.gate_size / 2.0):
+                hit = True
+                info_lat, info_vert = lat_now, vert_now
+
+        # Legacy centre-radius proximity fallback (no-op while radius is 0).
+        if not hit and GATE_PROXIMITY_RADIUS > 0.0:
+            if float(np.linalg.norm(pos - gate_p)) <= GATE_PROXIMITY_RADIUS:
+                hit = True
+                _, info_lat, info_vert = _frame_errs(pos, gate_p, normal)
+
+        if not hit:
+            break
+
+        checker.gates_passed += 1
+        checker._next_gate = (checker._next_gate + 1) % checker.num_gates
+        passed_any = True
+        if checker._next_gate == 0:  # wrapped -> non-periodic course complete
+            break
+
+    checker._prev_pos = pos
+    checker._prev_signed_dist = info_signed  # kept for any external readers
 
     if return_info:
-        return passed, {
-            "gate_index_checked": gate_index_checked,
-            "prev_signed_dist": prev_signed,
-            "signed_dist": signed_dist,
-            "crossed_plane": bool(crossed),
-            "lateral_err": (None if lateral_err is None else float(lateral_err)),
-            "vertical_err": (None if vertical_err is None else float(vertical_err)),
-            "orientation_err_deg": (
-                None if orientation_err_deg is None else float(orientation_err_deg)
-            ),
-            "passed": bool(passed),
+        return passed_any, {
+            "gate_index_checked": entry_gate,
+            "prev_signed_dist": None,
+            "signed_dist": info_signed,
+            "crossed_plane": bool(info_crossed),
+            "lateral_err": info_lat,
+            "vertical_err": info_vert,
+            "orientation_err_deg": info_orient,
+            "passed": bool(passed_any),
             "next_gate_after": int(checker._next_gate),
         }
-    return passed
+    return passed_any
 
 
 def write_gate_debug_csv(run_dir, run_tag, circuit_idx, label_name, rows):
@@ -471,8 +482,12 @@ def build_world(bp, gate_cfg, init_pos_enu, m_arm, body_name):
         yaw = float(gate_cfg.gate_yaw[gi])
         qw, qz = math.cos(yaw/2.0), math.sin(yaw/2.0)
         gb = world.spec.worldbody.add_body(name=f"gate_{gi}", pos=[gx, gy, gz], quat=[qw, 0, 0, qz])
+        # Half-extents = GATE_SIZE/2 so the drawn opening exactly matches the
+        # pass window (lat/vert <= gate_size/2 in check_gate_passing_eps); the
+        # visible frame and the scoring criterion stay in sync.
+        _gh = GATE_SIZE / 2.0
         gb.add_geom(name=f"gate_plane_{gi}",  type=mujoco.mjtGeom.mjGEOM_BOX,
-                    size=[0.01, 0.75, 0.75], rgba=(1.0, 0.55, 0.0, 0.25),
+                    size=[0.01, _gh, _gh], rgba=(1.0, 0.55, 0.0, 0.25),
                     contype=0, conaffinity=0)
         gb.add_geom(name=f"gate_marker_{gi}", type=mujoco.mjtGeom.mjGEOM_SPHERE,
                     size=[0.06, 0.0, 0.0],   rgba=(1.0, 0.1, 0.1, 1.0),
@@ -615,10 +630,16 @@ def draw_gate_ids(frame, gate_cfg, x_offset, bbox):
 
 
 # ── render ───────────────────────────────────────────────────────────────────
+# --no-video: run the rollouts and regenerate the comparison bar chart only,
+# skipping the (slow) MuJoCo frame rendering and the .mp4 entirely.
+NO_VIDEO = "--no-video" in sys.argv
+FPS = 30
 mp4 = RUN_DIR / f"comparison_flight_topdown_{RUN_TAG}.mp4"
-recorder = VideoRecorder(file_name=mp4.stem, output_folder=mp4.parent,
-                         width=HALF_W * 2, height=HALF_H, fps=30)
-steps_per_frame = max(1, int(round(1.0 / (recorder.fps * SIM_DT))))
+recorder = None
+if not NO_VIDEO:
+    recorder = VideoRecorder(file_name=mp4.stem, output_folder=mp4.parent,
+                             width=HALF_W * 2, height=HALF_H, fps=FPS)
+steps_per_frame = max(1, int(round(1.0 / (FPS * SIM_DT))))
 
 canonical_gates = []
 evolved_gates = []
@@ -635,7 +656,7 @@ max_steps     = int(SIM_TIME / SIM_DT) + 1
 
 t0 = time.time()
 for k, gate_cfg in enumerate(gate_cfgs):
-    print(f"  rendering circuit {k+1}/{N_TRAJECTORIES} …")
+    print(f"  {'rollout' if NO_VIDEO else 'rendering'} circuit {k+1}/{N_TRAJECTORIES} …")
     debug_this = WRITE_GATE_DEBUG_CSV and (k == DEBUG_GATE_CSV_CIRCUIT)
     if debug_this:
         can_pos_ned, can_eul, can_gates, can_debug_rows = logged_rollout(
@@ -655,6 +676,8 @@ for k, gate_cfg in enumerate(gate_cfgs):
     canonical_gates.append(float(can_gates))
     evolved_gates.append(float(evo_gates))
 
+    if NO_VIDEO:
+        continue
     if len(can_pos_ned) < 2 or len(evo_pos_ned) < 2:
         continue
     can_pos_enu, can_quat = ned_to_enu(can_pos_ned, can_eul)
@@ -709,7 +732,8 @@ for k, gate_cfg in enumerate(gate_cfgs):
             label(combined, f"d0_evo={signed_to_gate0_ned(evo_pos_ned[ei]):+.2f} m", HALF_W + 20, 65)
             recorder.write(frame=combined)
 
-recorder.release()
+if recorder is not None:
+    recorder.release()
 
 try:
     import matplotlib.pyplot as plt
@@ -738,4 +762,4 @@ try:
 except Exception as exc:
     print(f"  comparison bar chart skipped: {exc}")
 
-print(f"\nDone in {time.time()-t0:.1f}s → {mp4}")
+print(f"\nDone in {time.time()-t0:.1f}s → {'(chart only, no video)' if NO_VIDEO else mp4}")
