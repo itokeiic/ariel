@@ -26,9 +26,19 @@ uv sync
 # 3. Sanity-check the env (fast, no Slurm): import + 1-second help.
 uv run --no-sync examples/spear/17_drone_evo_average_num_gates_lee.py --help
 
-# 4. Submit the 20-task array. Set your partition (find names with: sinfo).
+# 4. Submit the 20-task array on the `batch` partition (CPU, 4-day limit).
 mkdir -p cluster/logs
-sbatch --partition=<YOUR_PARTITION> cluster/run_ea_array.sbatch
+sbatch --partition=batch cluster/run_ea_array.sbatch
+```
+
+### Partition choice (Hex / ci-group cluster)
+
+Use **`batch`** — CPU, 4-day limit, Ripper 2-7. The EA is CPU-only and each run
+takes ~1.5-2.5 h, so avoid `short` (2 h cap). Use a GPU partition
+(`batch-gpu` or `gpu`) only to render the comparison videos on the cluster:
+
+```bash
+MUJOCO_GL=egl sbatch --partition=batch-gpu --gres=gpu:1 cluster/run_ea_array.sbatch
 ```
 
 ## Monitor / collect

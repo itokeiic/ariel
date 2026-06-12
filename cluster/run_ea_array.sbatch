@@ -3,19 +3,22 @@
 # 20 times (one per array task) with seeds 0..19, each writing a separate
 # out-dir. Submit from the repo root on the login node:
 #
-#     sbatch --partition=<YOUR_PARTITION> cluster/run_ea_array.sbatch
+#     sbatch --partition=batch cluster/run_ea_array.sbatch
 #
-# (Resource flags below are defaults; override on the command line as needed,
-#  e.g.  sbatch --partition=cpu --time=06:00:00 --cpus-per-task=4 ... )
+# Hex cluster (ci-group): use the `batch` partition — CPU, 4-day limit, Ripper
+# 2-7. Avoid `short` (2 h cap; a run can take ~1.5-2.5 h). Use a GPU partition
+# (`batch-gpu`/`gpu`) only if you want the comparison videos rendered (then add
+# --gres=gpu:1 and export MUJOCO_GL=egl). Resource flags below are defaults;
+# override on the command line as needed.
 #
 #SBATCH --job-name=ariel-ea
 #SBATCH --array=0-19
 #SBATCH --output=cluster/logs/ea_seed%a_%A.out
 #SBATCH --error=cluster/logs/ea_seed%a_%A.err
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-# No --partition / --gres here: pass --partition on the sbatch command line.
+# No --partition / --gres here: pass --partition=batch on the sbatch command line.
 # The EA is CPU-only; the end-of-run MuJoCo video is optional (see MUJOCO_GL).
 
 set -euo pipefail
