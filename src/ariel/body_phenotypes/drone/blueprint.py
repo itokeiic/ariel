@@ -36,10 +36,41 @@ class CorePlateNode:
 
 
 @dataclass
+class JointSpec:
+    """Articulation of a node relative to its parent.
+
+    ``type="fixed"`` (the default) welds the node to its parent, which is the
+    historical blueprint behaviour — every existing blueprint therefore keeps
+    its rigid geometry. A ``"revolute"`` joint rotates about ``axis`` (in the
+    node's own attachment frame) between ``lower`` and ``upper``;
+    ``"continuous"`` is revolute without limits.
+
+    Field names and units mirror URDF so MJCF, URDF and USD backends emit the
+    same articulation: angles in radians, effort in N·m, velocity in rad/s.
+    """
+    type: str = "fixed"                                # "fixed"|"revolute"|"continuous"
+    axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    lower: float = -0.4                                # rad (revolute only)
+    upper: float = 0.4                                 # rad (revolute only)
+    effort: float = 5.0                                # N·m
+    velocity: float = 4.0                              # rad/s
+    damping: float = 0.05
+    friction: float = 0.0
+
+    @property
+    def is_actuated(self) -> bool:
+        """True when this joint adds a controllable DOF."""
+        return self.type in ("revolute", "continuous")
+
+
+@dataclass
 class ArmNode:
     type: str = "Arm"
     length: float = 0.18         # m
     pose: Pose = field(default_factory=Pose)   # attachment frame on parent (CorePlate)
+    # Arm sweep/tilt DOF. axis=(0,0,1) sweeps the arm in azimuth about the
+    # core; axis=(0,1,0) tilts it in elevation.
+    joint: JointSpec = field(default_factory=JointSpec)
 
 
 @dataclass
@@ -48,6 +79,8 @@ class MotorNode:
     pose: Pose = field(default_factory=Pose)   # pose on parent Arm tip
     spin: str = "ccw"            # "cw" | "ccw"
     propsize: int = 5            # inches; looked up in propeller_data for kf/km
+    # Motor cant DOF — tilts the thrust axis relative to the arm.
+    joint: JointSpec = field(default_factory=JointSpec)
 
 
 @dataclass
@@ -56,6 +89,10 @@ class RotorNode:
     radius: float = 0.0635       # m  (5" prop ≈ 0.127 m diameter)
     pitch: float = 0.045         # m
     blades: int = 2
+    # No JointSpec on purpose: rotor spin is not simulated as a DOF. Thrust is
+    # applied as a force along the motor's axis, so a free-spinning rotor body
+    # would only add gyroscopic terms (and solver cost) without adding thrust.
+    # Revisit if gyroscopic coupling turns out to matter for fast morphing.
 
 
 @dataclass
@@ -63,6 +100,34 @@ class SensorNode:
     type: str = "Sensor"
     sensor_type: str = "imu"     # "imu" | "camera" | "range"
     pose: Pose = field(default_factory=Pose)
+
+
+# ---------- canonical link / joint names ----------
+#
+# Every backend (MJCF, URDF, USD) must emit these exact names so that a body
+# generated from a blueprint is drivable by the Isaac scripts written against
+# the hand-authored xacro drones — e.g. 03_tilting_arms_midair.py does
+# ``find_joints("base_to_arm_.*_arm_joint")``. Keep in sync with
+# examples/spear_vua_upb/spear/02_generate_novel_morphology.py.
+
+def limb_name(i: int) -> str:
+    """Name of the i-th arm/motor chain (``arm_0``, ``arm_1``, ...)."""
+    return f"arm_{i}"
+
+
+def arm_joint_name(i: int) -> str:
+    """Core → arm joint of the i-th limb."""
+    return f"base_to_{limb_name(i)}_arm_joint"
+
+
+def motor_joint_name(i: int) -> str:
+    """Arm → motor joint of the i-th limb."""
+    return f"{limb_name(i)}_arm_to_motor_joint"
+
+
+def rotor_joint_name(i: int) -> str:
+    """Motor → rotor joint of the i-th limb (fixed; see RotorNode)."""
+    return f"{limb_name(i)}_motor_to_rotor_joint"
 
 
 # ---------- blueprint container ----------
@@ -139,6 +204,12 @@ class DroneBlueprint:
             # rebuild Pose sub-dataclass where present
             if "pose" in data and isinstance(data["pose"], dict):
                 data["pose"] = Pose(**data["pose"])
+            # rebuild JointSpec; blueprints written before joints existed
+            # simply have no "joint" key and fall back to the fixed default.
+            if "joint" in data and isinstance(data["joint"], dict):
+                joint = dict(data["joint"])
+                joint["axis"] = tuple(joint["axis"])
+                data["joint"] = JointSpec(**joint)
             payload = cls_(**data)
             bp.g.add_node(entry["id"], data=payload)
             bp._next_id = max(bp._next_id, entry["id"] + 1)
