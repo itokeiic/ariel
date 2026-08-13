@@ -273,6 +273,63 @@ def blueprint_to_mjspec(
     return spec
 
 
+def _R_to_quat(R: np.ndarray) -> tuple[float, float, float, float]:
+    """Rotation matrix → (w, x, y, z) quaternion (Shepperd's method)."""
+    tr = float(R[0, 0] + R[1, 1] + R[2, 2])
+    if tr > 0.0:
+        s = math.sqrt(tr + 1.0) * 2.0
+        w = 0.25 * s
+        x = float(R[2, 1] - R[1, 2]) / s
+        y = float(R[0, 2] - R[2, 0]) / s
+        z = float(R[1, 0] - R[0, 1]) / s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = math.sqrt(1.0 + float(R[0, 0] - R[1, 1] - R[2, 2])) * 2.0
+        w = float(R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = float(R[0, 1] + R[1, 0]) / s
+        z = float(R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = math.sqrt(1.0 + float(R[1, 1] - R[0, 0] - R[2, 2])) * 2.0
+        w = float(R[0, 2] - R[2, 0]) / s
+        x = float(R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = float(R[1, 2] + R[2, 1]) / s
+    else:
+        s = math.sqrt(1.0 + float(R[2, 2] - R[0, 0] - R[1, 1])) * 2.0
+        w = float(R[1, 0] - R[0, 1]) / s
+        x = float(R[0, 2] + R[2, 0]) / s
+        y = float(R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    n = math.sqrt(w * w + x * x + y * y + z * z)
+    return (w / n, x / n, y / n, z / n)
+
+
+def _axis_to_z_quat(axis: tuple[float, float, float]) -> tuple[float, float, float, float]:
+    """Quaternion rotating +Z onto ``axis``.
+
+    USD's ``UsdPhysicsRevoluteJoint`` only accepts an axis *token* ("X"/"Y"/
+    "Z"), so an arbitrary hinge axis is expressed by rotating both joint
+    frames and always authoring ``physics:axis = "Z"``. For ``axis=(0,0,1)``
+    this is the identity, so the common case stays clean.
+    """
+    a = np.asarray(axis, dtype=float)
+    n = float(np.linalg.norm(a))
+    if n == 0.0:
+        raise ValueError("JointSpec.axis must be non-zero")
+    a = a / n
+    z = np.array([0.0, 0.0, 1.0])
+    d = float(np.dot(z, a))
+    if d > 1.0 - 1e-12:
+        return (1.0, 0.0, 0.0, 0.0)
+    if d < -1.0 + 1e-12:
+        return (0.0, 1.0, 0.0, 0.0)          # 180° about X
+    v = np.cross(z, a)
+    s = math.sqrt((1.0 + d) * 2.0)
+    q = np.array([s * 0.5, v[0] / s, v[1] / s, v[2] / s])
+    q = q / float(np.linalg.norm(q))
+    return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+
+
 def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
     """ZYX intrinsic Euler → (w, x, y, z) quaternion (MuJoCo order)."""
     cr, sr = math.cos(roll / 2), math.sin(roll / 2)
@@ -474,6 +531,193 @@ def blueprint_to_urdf(
 
 # ---------- USD backend (blueprint → .usda ASCII file) ----------
 
+def _write_articulated_links_and_joints(
+    _w, _prim_open, _prim_open_plain, _close, _xform_ops, _color, _quat_str,
+    robot_name: str,
+    core: CorePlateNode,
+    core_mass: float,
+    limbs: list[tuple[ArmNode, "MotorNode | None", "RotorNode | None"]],
+    *,
+    arm_mass: float,
+    motor_mass: float,
+    rotor_mass: float,
+    arm_radius: float,
+    motor_radius: float,
+    motor_thickness: float,
+    joint_drive_stiffness: float,
+) -> None:
+    """Emit a jointed articulation: flat rigid-body links plus physics joints.
+
+    USD physics forbids a rigid body having another rigid body as an
+    ancestor, so links are authored as *siblings* under the articulation root
+    with root-relative transforms, and their relative placement is carried by
+    the joint frames. (The rigid export keeps the nested layout, which is
+    valid precisely because only the root is a body.)
+
+    Link and joint names follow
+    ``examples/spear_vua_upb/spear/02_generate_novel_morphology.py`` so that
+    the consortium's Isaac scripts drive blueprint-generated bodies
+    unmodified — ``00``/``01`` default to ``--base_body_name base_link`` and
+    ``03`` looks up ``find_joints("base_to_arm_.*_arm_joint")``.
+    """
+    from .blueprint import arm_joint_name, limb_name, motor_joint_name
+
+    def _joint(
+        name: str,
+        body0: str,
+        body1: str,
+        t_rel: np.ndarray,
+        R_rel: np.ndarray,
+        spec,
+    ) -> None:
+        """One joint between two links, child frame at the child's origin."""
+        q_axis = _axis_to_z_quat(spec.axis) if spec.is_actuated else (1.0, 0.0, 0.0, 0.0)
+        R_axis = np.array([
+            [1 - 2 * (q_axis[2] ** 2 + q_axis[3] ** 2),
+             2 * (q_axis[1] * q_axis[2] - q_axis[3] * q_axis[0]),
+             2 * (q_axis[1] * q_axis[3] + q_axis[2] * q_axis[0])],
+            [2 * (q_axis[1] * q_axis[2] + q_axis[3] * q_axis[0]),
+             1 - 2 * (q_axis[1] ** 2 + q_axis[3] ** 2),
+             2 * (q_axis[2] * q_axis[3] - q_axis[1] * q_axis[0])],
+            [2 * (q_axis[1] * q_axis[3] - q_axis[2] * q_axis[0]),
+             2 * (q_axis[2] * q_axis[3] + q_axis[1] * q_axis[0]),
+             1 - 2 * (q_axis[1] ** 2 + q_axis[2] ** 2)],
+        ])
+        q0 = _R_to_quat(R_rel @ R_axis)
+
+        if spec.is_actuated:
+            _prim_open(f'def PhysicsRevoluteJoint "{name}"',
+                       ["PhysicsDriveAPI:angular"])
+        else:
+            _prim_open_plain(f'def PhysicsFixedJoint "{name}"')
+
+        _w(f"rel physics:body0 = </{robot_name}/{body0}>")
+        _w(f"rel physics:body1 = </{robot_name}/{body1}>")
+        _w(f"point3f physics:localPos0 = ({t_rel[0]:.9g}, {t_rel[1]:.9g}, {t_rel[2]:.9g})")
+        _w(f"quatf physics:localRot0 = {_quat_str(q0)}")
+        _w("point3f physics:localPos1 = (0, 0, 0)")
+        _w(f"quatf physics:localRot1 = {_quat_str(q_axis)}")
+
+        if spec.is_actuated:
+            _w('uniform token physics:axis = "Z"')
+            if spec.type == "revolute":
+                # USD authors revolute limits in DEGREES.
+                _w(f"float physics:lowerLimit = {math.degrees(spec.lower):.6g}")
+                _w(f"float physics:upperLimit = {math.degrees(spec.upper):.6g}")
+            # Position drive. 02's URDF->USD conversion runs with
+            # --joint-stiffness 0, which leaves joints free-swinging; a real
+            # stiffness is what makes a commanded angle actually hold.
+            _w('uniform token drive:angular:physics:type = "force"')
+            _w("float drive:angular:physics:targetPosition = 0")
+            _w(f"float drive:angular:physics:stiffness = {joint_drive_stiffness:.6g}")
+            _w(f"float drive:angular:physics:damping = {spec.damping:.6g}")
+            _w(f"float drive:angular:physics:maxForce = {spec.effort:.6g}")
+        _close()
+        _w()
+
+    # --- articulation root (Xform only: its children are the bodies) --------
+    _prim_open(f'def Xform "{robot_name}"', ["PhysicsArticulationRootAPI"])
+    _xform_ops((0.0, 0.0, 0.0))
+    _w()
+
+    # base link
+    _prim_open('def Xform "base_link"', ["PhysicsRigidBodyAPI", "PhysicsMassAPI"])
+    _w(f"float physics:mass = {core_mass:.6g}")
+    _xform_ops((0.0, 0.0, 0.0))
+    _w()
+    _prim_open('def Cylinder "geom"', ["PhysicsCollisionAPI"])
+    _w(f"double radius = {core.radius:.6g}")
+    _w(f"double height = {core.thickness:.6g}")
+    _w('token axis = "Z"')
+    _w(_color(0.2, 0.4, 0.8))
+    _close()
+    _close()
+    _w()
+
+    for i, (arm, motor, rotor) in enumerate(limbs):
+        limb = limb_name(i)
+        R_arm = _rpy_to_R(*arm.pose.rpy)
+        t_arm = np.asarray(arm.pose.xyz, dtype=float)
+
+        # arm link (root-relative pose == its pose on the core)
+        _prim_open(f'def Xform "{limb}_arm_link"',
+                   ["PhysicsRigidBodyAPI", "PhysicsMassAPI"])
+        _w(f"float physics:mass = {arm_mass:.6g}")
+        _xform_ops(arm.pose.xyz, arm.pose.rpy)
+        _w()
+        cap_height = max(0.0, arm.length - 2.0 * arm_radius)
+        _prim_open('def Capsule "geom"', ["PhysicsCollisionAPI"])
+        _w(f"double radius = {arm_radius:.6g}")
+        _w(f"double height = {cap_height:.6g}")
+        _w('token axis = "X"')
+        _w(f"double3 xformOp:translate = ({arm.length / 2.0:.6g}, 0, 0)")
+        _w('uniform token[] xformOpOrder = ["xformOp:translate"]')
+        _w(_color(0.3, 0.3, 0.3))
+        _close()
+        _close()
+        _w()
+
+        if motor is not None:
+            R_motor = _rpy_to_R(*motor.pose.rpy)
+            t_motor = np.asarray(motor.pose.xyz, dtype=float)
+            # Root-relative pose of the motor link.
+            t_m_root = t_arm + R_arm @ t_motor
+            R_m_root = R_arm @ R_motor
+            q_m_root = _R_to_quat(R_m_root)
+
+            # The rotor is always rigidly attached, so it contributes
+            # geometry and mass to the motor body rather than a link.
+            _prim_open(f'def Xform "{limb}_motor_link"',
+                       ["PhysicsRigidBodyAPI", "PhysicsMassAPI"])
+            _w(f"float physics:mass = {motor_mass + (rotor_mass if rotor else 0.0):.6g}")
+            _w(f"double3 xformOp:translate = ({t_m_root[0]:.9g}, {t_m_root[1]:.9g}, {t_m_root[2]:.9g})")
+            _w(f"quatf xformOp:orient = {_quat_str(q_m_root)}")
+            _w('uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]')
+            _w()
+            r, g, b = (1.0, 0.2, 0.2) if motor.spin == "cw" else (0.2, 0.8, 0.2)
+            _prim_open('def Cylinder "geom"', ["PhysicsCollisionAPI"])
+            _w(f"double radius = {motor_radius:.6g}")
+            _w(f"double height = {2.0 * motor_thickness:.6g}")
+            _w('token axis = "Z"')
+            _w(_color(r, g, b))
+            _close()
+            if rotor is not None:
+                _w()
+                # No apiSchemas: an empty "prepend apiSchemas = []" is a USD
+                # syntax error, and the rotor is plain geometry on the motor
+                # body (see RotorNode — spin is not a simulated DOF).
+                _prim_open_plain(f'def Xform "{limb}_rotor"')
+                _xform_ops((0.0, 0.0, motor_thickness + 0.001))
+                _w()
+                _prim_open('def Cylinder "geom"', ["PhysicsCollisionAPI"])
+                _w(f"double radius = {rotor.radius:.6g}")
+                _w("double height = 0.002")
+                _w('token axis = "Z"')
+                _w(_color(0.8, 0.8, 0.8))
+                _close()
+                _close()
+            _close()
+            _w()
+
+    # --- joints -------------------------------------------------------------
+    for i, (arm, motor, _rotor) in enumerate(limbs):
+        limb = limb_name(i)
+        _joint(
+            arm_joint_name(i), "base_link", f"{limb}_arm_link",
+            np.asarray(arm.pose.xyz, dtype=float), _rpy_to_R(*arm.pose.rpy),
+            arm.joint,
+        )
+        if motor is not None:
+            _joint(
+                motor_joint_name(i), f"{limb}_arm_link", f"{limb}_motor_link",
+                np.asarray(motor.pose.xyz, dtype=float),
+                _rpy_to_R(*motor.pose.rpy),
+                motor.joint,
+            )
+
+    _close()  # articulation root
+
+
 def blueprint_to_usd(
     bp: DroneBlueprint,
     out_path: str,
@@ -486,6 +730,7 @@ def blueprint_to_usd(
     arm_radius: float = 0.005,
     motor_radius: float = 0.015,
     motor_thickness: float = 0.008,
+    joint_drive_stiffness: float = 20.0,
 ) -> str:
     """Compile a DroneBlueprint into a USD ASCII (.usda) file for Isaac Lab.
 
@@ -499,6 +744,18 @@ def blueprint_to_usd(
     * Geometry prims (``Cylinder`` / ``Capsule``) carry
       ``PhysicsCollisionAPI`` for PhysX contact.
     * Conventions match ``blueprint_to_mjspec``: Z-up, no NED inversion.
+
+    Two layouts are emitted depending on the blueprint:
+
+    * **rigid** (no actuated ``JointSpec`` anywhere) -- the historical output:
+      one rigid body at the root with all geometry nested beneath it.
+    * **articulated** (any Arm/Motor joint is revolute or continuous) --
+      flat rigid-body links under a ``PhysicsArticulationRootAPI`` Xform,
+      wired by ``PhysicsRevoluteJoint`` / ``PhysicsFixedJoint`` prims with
+      angular position drives. Link and joint names match
+      ``02_generate_novel_morphology.py`` (``base_link``,
+      ``base_to_arm_0_arm_joint``, ...) so the consortium's Isaac scripts
+      apply unchanged.
 
     Does **not** require ``pxr`` / Omniverse at runtime — the file is
     produced as plain text.
@@ -514,6 +771,10 @@ def blueprint_to_usd(
         arm_radius: arm capsule radius (m).
         motor_radius: motor cylinder radius (m).
         motor_thickness: motor cylinder half-height (m).
+        joint_drive_stiffness: angular position-drive stiffness for actuated
+            joints. 02's URDF->USD conversion passes --joint-stiffness 0,
+            which leaves joints free-swinging; a non-zero value here is what
+            makes a commanded joint angle hold.
 
     Returns:
         The absolute path to the written ``.usda`` file.
@@ -555,12 +816,16 @@ def blueprint_to_usd(
         _w(bracket)
 
     def _quat(rpy: tuple[float, float, float]) -> str:
+        # 9 significant digits: USD stores quatf/point3f as float32 (~7-9
+        # digits), and 6 digits leaves joint frames inconsistent at the 1e-6
+        # level, which is enough to make a physics-schema consistency check
+        # fail even though the geometry is correct.
         w, x, y, z = _rpy_to_quat(*rpy)
-        return f"({w:.6g}, {x:.6g}, {y:.6g}, {z:.6g})"
+        return f"({w:.9g}, {x:.9g}, {y:.9g}, {z:.9g})"
 
     def _xform_ops(xyz: tuple[float, float, float],
                    rpy: tuple[float, float, float] | None = None) -> None:
-        _w(f"double3 xformOp:translate = ({xyz[0]:.6g}, {xyz[1]:.6g}, {xyz[2]:.6g})")
+        _w(f"double3 xformOp:translate = ({xyz[0]:.12g}, {xyz[1]:.12g}, {xyz[2]:.12g})")
         if rpy is not None and any(v != 0.0 for v in rpy):
             _w(f"quatf xformOp:orient = {_quat(rpy)}")
             _w('uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]')
@@ -569,6 +834,15 @@ def blueprint_to_usd(
 
     def _color(r: float, g: float, b: float) -> str:
         return f"color3f[] primvars:displayColor = [({r:.3g}, {g:.3g}, {b:.3g})]"
+
+    def _prim_open_plain(prim_def: str) -> None:
+        nonlocal depth
+        _w(prim_def)
+        _w("{")
+        depth += 1
+
+    def _quat_str(q: tuple[float, float, float, float]) -> str:
+        return f"({q[0]:.9g}, {q[1]:.9g}, {q[2]:.9g}, {q[3]:.9g})"
 
     # --- file header ---
     _w("#usda 1.0")
@@ -580,7 +854,45 @@ def blueprint_to_usd(
     _close(")")
     _w()
 
-    # --- root prim ---
+    # --- articulated export -------------------------------------------------
+    # Collect limbs in a stable order so link/joint names are deterministic.
+    limbs: list[tuple[ArmNode, MotorNode | None, RotorNode | None]] = []
+    for _arm_id in bp.children(bp.root_id):  # type: ignore[arg-type]
+        _arm = bp.payload(_arm_id)
+        if not isinstance(_arm, ArmNode):
+            continue
+        _motor = _rotor = None
+        for _mid in bp.children(_arm_id):
+            _m = bp.payload(_mid)
+            if isinstance(_m, MotorNode):
+                _motor = _m
+                for _rid in bp.children(_mid):
+                    _r = bp.payload(_rid)
+                    if isinstance(_r, RotorNode):
+                        _rotor = _r
+                        break
+                break
+        limbs.append((_arm, _motor, _rotor))
+
+    articulated = any(
+        a.joint.is_actuated or (m is not None and m.joint.is_actuated)
+        for a, m, _ in limbs
+    )
+
+    if articulated:
+        _write_articulated_links_and_joints(
+            _w, _prim_open, _prim_open_plain, _close, _xform_ops, _color,
+            _quat_str, robot_name, core, core_mass, limbs,
+            arm_mass=arm_mass, motor_mass=motor_mass, rotor_mass=rotor_mass,
+            arm_radius=arm_radius, motor_radius=motor_radius,
+            motor_thickness=motor_thickness,
+            joint_drive_stiffness=joint_drive_stiffness,
+        )
+        usda = "\n".join(lines)
+        Path(out_path).write_text(usda, encoding="utf-8")
+        return str(Path(out_path).resolve())
+
+    # --- root prim (rigid export: one body, geometry nested) ----------------
     _prim_open(f'def Xform "{robot_name}"',
                ["PhysicsArticulationRootAPI", "PhysicsRigidBodyAPI"])
     _xform_ops((0.0, 0.0, 0.0))
@@ -650,11 +962,11 @@ def blueprint_to_usd(
 
                 rotor_h = 0.002
                 rotor_z = motor_thickness + rotor_h / 2.0
-                _open(f'def Xform "rotor_{motor_index}" (\n    prepend apiSchemas = ["PhysicsMassAPI"]\n)')
+                _prim_open(f'def Xform "rotor_{motor_index}"', ["PhysicsMassAPI"])
                 _w(f"float physics:mass = {rotor_mass:.6g}")
                 _xform_ops((0.0, 0.0, rotor_z))
                 _w()
-                _open('def Cylinder "geom" (\n    prepend apiSchemas = ["PhysicsCollisionAPI"]\n)')
+                _prim_open('def Cylinder "geom"', ["PhysicsCollisionAPI"])
                 _w(f"double radius = {rotor.radius:.6g}")
                 _w(f"double height = {rotor_h:.6g}")
                 _w('token axis = "Z"')
