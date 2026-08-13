@@ -29,9 +29,83 @@ See `experimentation/RUNTIME_DYNAMICS_MIGRATION.md` Phase 2.1.
 """
 from __future__ import annotations
 
+import os
+import warnings
+
 import numpy as np
 
 from .propeller_data import get_extended_prop_params
+
+# Body-frame thrust axis this reduced model assumes for EVERY motor. In the
+# NED convention used by DroneSimulator, "up" is -Z, so an untilted rotor has
+# dir = (0, 0, -1). The moment coefficients below are the closed form of
+# r_i x (k_f W² · THRUST_AXIS); see _guard_axial_thrust.
+_ASSUMED_THRUST_AXIS = np.array([0.0, 0.0, -1.0])
+
+# Deviation below which a motor counts as axial (radians). Purely numerical
+# slack — 0.057°, well under any deliberate cant.
+_AXIAL_TOL_RAD = 1e-3
+
+_NONAXIAL_WARNED = False
+
+
+def _guard_axial_thrust(propellers: list) -> None:
+    """Warn (or raise) when thrust normals are not along the assumed axis.
+
+    The reduced dynamics built from this parameter dict applies all thrust
+    along the body thrust axis: the force is ``-k_w · sum(W²)`` on body Z and
+    the moments are ``Mx = -y_i·k_f·W²``, ``My = +x_i·k_f·W²``. The per-motor
+    thrust normal ``dir[0:3]`` is therefore IGNORED by the plant — while
+    DroneConfiguration._compute_allocation_matrices DOES honour it when
+    building Bf/Bm, which get_params() hands to the controller as mixerFM.
+    A canted rotor is consequently allocated as tilted but simulated as axial.
+
+    This guard makes that boundary visible instead of silent. Set
+    ``ARIEL_STRICT_THRUST_NORMALS=1`` to turn it into a hard error.
+
+    Args:
+        propellers: list of propeller dicts (`loc`, `dir`, `propsize`).
+    """
+    global _NONAXIAL_WARNED
+
+    max_tilt = 0.0
+    for prop in propellers:
+        n_i = np.asarray(prop["dir"][:3], dtype=float)
+        norm_i = float(np.linalg.norm(n_i))
+        if norm_i == 0.0:
+            raise ValueError(
+                f"derive_reference_params: zero-length thrust normal in {prop!r}"
+            )
+        cos_a = float(np.dot(n_i / norm_i, _ASSUMED_THRUST_AXIS))
+        max_tilt = max(max_tilt, float(np.arccos(np.clip(cos_a, -1.0, 1.0))))
+
+    if max_tilt <= _AXIAL_TOL_RAD:
+        return
+
+    deg = np.degrees(max_tilt)
+    # sin(tilt) of the thrust is the in-plane component the plant drops
+    # entirely; 1-cos(tilt) is the shortfall along the thrust axis.
+    detail = (
+        f"thrust normals deviate from the assumed body axis "
+        f"({', '.join(f'{v:g}' for v in _ASSUMED_THRUST_AXIS)}) "
+        f"by up to {deg:.1f} deg. The reduced "
+        f"dynamics ignores dir[0:3], so {np.sin(max_tilt) * 100:.0f}% of that "
+        f"rotor's thrust (the in-plane component) is not simulated, while the "
+        f"controller's mixerFM does account for it. Results for non-axial "
+        f"rotors are not trustworthy."
+    )
+
+    if os.environ.get("ARIEL_STRICT_THRUST_NORMALS", "") not in ("", "0"):
+        raise ValueError(f"derive_reference_params: {detail}")
+
+    if not _NONAXIAL_WARNED:
+        _NONAXIAL_WARNED = True
+        warnings.warn(
+            f"{detail} (further occurrences suppressed; set "
+            f"ARIEL_STRICT_THRUST_NORMALS=1 to raise instead)",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 def _spin_sign(rotation: str) -> float:
@@ -86,6 +160,9 @@ def derive_reference_params(
     n = len(propellers)
     if n == 0:
         raise ValueError("derive_reference_params: no propellers in config")
+
+    # The plant below is axial-thrust only; say so out loud if it isn't true.
+    _guard_axial_thrust(propellers)
 
     extended = get_extended_prop_params(prop_size)
     k_f, k_m = extended["constants"]

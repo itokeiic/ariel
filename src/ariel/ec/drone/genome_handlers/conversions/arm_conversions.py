@@ -533,15 +533,37 @@ def cylinders_to_arms_cartesian_euler(cylinders):
 
 # Create aliases that match the existing pattern used in particle_repair_operator.py for polar angular
 def arms_to_cylinders_polar_angular(individual, propeller_radius=0.0254, cylinder_height=None):
-    """Alias for spherical_angular_arms_to_cylinders with default parameters."""
+    """Alias for spherical_angular_arms_to_cylinders with default parameters.
+
+    Column 2 of an ARIEL spherical genome is arm pitch in the ELEVATION
+    convention (0 = horizontal, +pi/2 = straight up), as documented on
+    SphericalAngularDroneGenomeHandler and as decoded by
+    spherical_angular_to_blueprint. spherical_to_cartesian, however, wants a
+    POLAR angle measured from +z (x, y scale with sin). Convert here, at the
+    single boundary between the genome and the collision geometry, so the
+    repair and symmetry operators built on these aliases all agree with the
+    decoder. Without it every planar airframe collapses onto the z-axis and
+    reports a false collision, and collision repair never converges.
+
+    NOTE: this is a deliberate divergence from airevolve, whose spherical
+    genome uses the polar convention directly (arm pitch limits [0, pi]).
+    """
     if cylinder_height is None:
         cylinder_height = 8 * propeller_radius
     valid_arms = ~np.isnan(individual).any(axis=-1)
     if not np.any(valid_arms):
         return []
-    valid_arm_params = individual[valid_arms]
+    valid_arm_params = np.asarray(individual)[valid_arms].copy()
+    valid_arm_params[:, 2] = np.pi / 2.0 - valid_arm_params[:, 2]  # elevation -> polar
     return spherical_angular_arms_to_cylinders(valid_arm_params, propeller_radius, cylinder_height)
 
 def cylinders_to_arms_polar_angular(cylinders):
-    """Alias for cylinders_to_spherical_angular_arms."""
-    return cylinders_to_spherical_angular_arms(cylinders)
+    """Alias for cylinders_to_spherical_angular_arms.
+
+    Inverse of the elevation -> polar conversion applied by
+    arms_to_cylinders_polar_angular, so repaired cylinders come back in the
+    genome's elevation convention.
+    """
+    arms = np.asarray(cylinders_to_spherical_angular_arms(cylinders)).copy()
+    arms[:, 2] = np.pi / 2.0 - arms[:, 2]  # polar -> elevation
+    return arms
