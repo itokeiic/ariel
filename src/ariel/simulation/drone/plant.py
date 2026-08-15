@@ -196,6 +196,99 @@ def allocation_matrix(
     return B
 
 
+def moment_allocation(
+    geom: RotorGeometry,
+    *,
+    torque_to_thrust_ratio: float,
+    inertia: Array | None = None,
+) -> Array:
+    """The moment block ``Bm`` of :func:`allocation_matrix`, shape (3, N).
+
+    Args:
+        geom: live rotor geometry in the body frame.
+        torque_to_thrust_ratio: ``km/kf`` in metres.
+        inertia: optional 3x3 body inertia tensor. When given, returns
+            ``I^-1 @ Bm`` — the *angular acceleration* each newton of thrust
+            produces, rather than the torque. Prefer this for anything about
+            agility: torque authority alone is misleading because inertia and
+            authority move together. On a quad swept from a fore-aft to a
+            lateral frame, roll torque rises 1.735 -> 3.896 N·m while roll
+            angular acceleration *falls* 2921 -> 1325 rad/s^2. It also matches
+            the plant, which works in angular acceleration
+            (``dynamics_params`` bakes inertia into ``k_p_signed``).
+    """
+    B = allocation_matrix(geom, torque_to_thrust_ratio=torque_to_thrust_ratio)
+    Bm = B[3:6, :]
+    if inertia is None:
+        return Bm
+    return np.linalg.solve(np.asarray(inertia, dtype=float), Bm)
+
+
+def maneuverability(
+    geom: RotorGeometry,
+    *,
+    torque_to_thrust_ratio: float,
+    inertia: Array | None = None,
+) -> float:
+    """Smallest eigenvalue of ``Bm @ Bm.T`` — moment authority on the weakest axis.
+
+    Ported from airevolve's morphological descriptor
+    (``inspection_tools/morphological_descriptors/hovering_info.py``), which
+    computes ``min(eig(Bm @ Bm.T))`` from ``dronehover``'s allocation matrix.
+    Here ``Bm`` comes from :func:`moment_allocation`, so one definition of the
+    geometry serves the plant, the controller and this metric.
+
+    Important caveat, measured rather than assumed: **for coplanar rotors the
+    smallest eigenvalue is the yaw one**, and yaw authority comes from the
+    propeller drag ratio ``km/kf``, which no in-plane geometry changes. On a
+    SPEAR-matched quad the eigenvalues are ``[5.1e-04, 0.08, 0.08]`` with the
+    small one's eigenvector exactly ``(0, 0, 1)``. So on ``Bm`` this metric is
+    identical across a whole azimuth sweep *and* across a 2x change in arm
+    length, while roll angular acceleration varies more than 2x over each. It
+    reports "can this airframe yaw", not "is this airframe agile".
+
+    Two ways to get a discriminating number:
+
+    * pass ``inertia`` — ``I^-1 Bm`` divides by an inertia that does grow with
+      arm length, so the metric varies (342 -> 16 as arms go 0.12 -> 0.25 m).
+      It stays blind to pure rotations, since the inertia tensor rotates with
+      the frame.
+    * read per-axis rows of :func:`moment_allocation` when the task loads one
+      axis in particular — a slalom loads roll.
+
+    The metric comes into its own for non-coplanar (tilted) rotors, where
+    geometry genuinely changes yaw authority.
+
+    Args:
+        geom: live rotor geometry in the body frame.
+        torque_to_thrust_ratio: ``km/kf`` in metres.
+        inertia: optional 3x3 inertia tensor; see :func:`moment_allocation`.
+
+    Returns:
+        Smallest eigenvalue, in (N·m)^2 per newton^2 (or (rad/s^2)^2 per
+        newton^2 when ``inertia`` is given).
+    """
+    Bm = moment_allocation(
+        geom, torque_to_thrust_ratio=torque_to_thrust_ratio, inertia=inertia
+    )
+    return float(np.min(np.linalg.eigvalsh(Bm @ Bm.T)))
+
+
+def rank_controllability(
+    geom: RotorGeometry,
+    *,
+    torque_to_thrust_ratio: float,
+    tol: float | None = None,
+) -> int:
+    """Rank of ``Bm`` — how many moment axes the rotors can independently drive.
+
+    airevolve's secondary maneuverability metric. 3 means full attitude
+    authority; less means some axis cannot be commanded at all.
+    """
+    Bm = moment_allocation(geom, torque_to_thrust_ratio=torque_to_thrust_ratio)
+    return int(np.linalg.matrix_rank(Bm, tol=tol))
+
+
 def solve_thrusts(
     B: Array,
     wrench: Array,
