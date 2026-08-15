@@ -91,9 +91,23 @@ SIM_DT         = 0.005
 LEE_POS_GAIN   = 14.3
 LEE_VEL_GAIN   = 9.0
 STARTUP_TIME   = 3.0             # BSplineGateTrajectory default
+# ── objective ───────────────────────────────────────────────────────────────
+# "legacy" reproduces 17_drone_evo_average_num_gates_lee.py exactly:
+#     10*gates + survival - 0.1*tracking_err + 10*(1-survival) if completed
+# Term magnitudes there are 30-150 / 0.6-1.0 / -0.008 to -0.39 / 0-3.7, so it
+# is the gate count with rounding errors attached, and it says nothing about
+# the constraint that actually binds.
 GATE_BONUS       = 10.0
 TRACK_WEIGHT     = 0.1
 COMPLETION_BONUS = 10.0
+
+# "normalized" (default): gates score out of 100, plus a quality budget worth
+# HALF a gate. The budget is capped there deliberately -- no combination of
+# quality terms can outrank passing one more gate, so the objective stays
+# lexicographic in practice while remaining continuous and differentiable-ish
+# for an EA. Within a gate tier -- which is most comparisons, since this
+# landscape is flat -- the quality terms are the whole signal.
+QUALITY_TERMS = ("track", "margin", "survive", "speed")
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
 parser.add_argument("--turn-deg", type=float, default=90.0)
@@ -125,6 +139,12 @@ parser.add_argument("--feedforward", action="store_true",
                          "lag but overshoots in speed and sags in altitude, and "
                          "currently tracks worse overall. Needs control design "
                          "before it is usable.")
+parser.add_argument("--objective", choices=("normalized", "legacy"),
+                    default="normalized",
+                    help="normalized: gates out of 100 plus a quality budget "
+                         "worth half a gate (tracking, control margin, "
+                         "survival, speed). legacy: example 17's formula, for "
+                         "reproducing its numbers.")
 parser.add_argument("--out-dir", default=None)
 args = parser.parse_args()
 
@@ -251,13 +271,20 @@ def rollout(propellers, course, speed) -> dict:
     try:
         drone, ctrl, traj, checker, wind = _build_stack(propellers, course, total_time)
     except Exception:
-        return {"fit": float("-inf"), "gates": 0, "survival": 0.0,
+        return {"fit": None, "gates": 0, "survival": 0.0,
                 "tracking_err": float("inf"), "completed": False, "saturation": 1.0,
-                "gates_flown": 0}
+                "saturation_hi": 1.0, "saturation_lo": 1.0, "gates_flown": 0}
 
     n_steps = int(sim_time / SIM_DT)
     w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
     tracking_sum, steps, sat, completed = 0.0, 0, 0, False
+    # Split by bound: the upper one means 'not enough thrust', the lower one
+    # means the allocation wanted a rotor to pull -- i.e. it ran out of
+    # differential range for the commanded moment. On this course the lower
+    # bound is what binds (29% of steps at 6 m/s against 0% upper), and it is
+    # the geometry-sensitive one: more moment per newton of differential means
+    # less need to drive a rotor toward zero.
+    sat_hi = sat_lo = 0
     # Tracking error is accumulated only while the course is running. After
     # total_time the reference clamps at the final gate while the drone is
     # still arriving, so post-course error swamps everything: at 4 m/s the
@@ -280,8 +307,12 @@ def rollout(propellers, course, speed) -> dict:
             if t_new <= total_time:
                 tracking_sum += float(np.linalg.norm(drone.pos - sDes[:3]))
             w = np.asarray(ctrl.w_cmd, dtype=float)
-            if np.any(w >= w_hi - 1e-6) or np.any(w <= w_lo + 1e-6):
+            pinned_hi = bool(np.any(w >= w_hi - 1e-6))
+            pinned_lo = bool(np.any(w <= w_lo + 1e-6))
+            if pinned_hi or pinned_lo:
                 sat += 1
+            sat_hi += pinned_hi
+            sat_lo += pinned_lo
             steps += 1
             if t_new <= total_time:
                 course_steps += 1
@@ -298,12 +329,63 @@ def rollout(propellers, course, speed) -> dict:
     tracking_err = tracking_sum / course_steps if course_steps else float("inf")
     gates = int(checker.gates_passed)
     gates_flown = int(np.sum(closest <= course.gate_size / 2.0))
-    bonus = COMPLETION_BONUS * (1.0 - survival) if completed else 0.0
     return {
-        "fit": GATE_BONUS * gates + survival - TRACK_WEIGHT * tracking_err + bonus,
+        "fit": None,   # scored by score(), which needs the course
         "gates": gates, "survival": survival, "tracking_err": tracking_err,
         "completed": completed, "saturation": sat / steps if steps else 1.0,
+        "saturation_hi": sat_hi / steps if steps else 1.0,
+        "saturation_lo": sat_lo / steps if steps else 1.0,
         "gates_flown": gates_flown,
+    }
+
+
+def score(out: dict, course, n_gates: int, objective: str) -> dict:
+    """Objective value plus its decomposition, so a score is auditable.
+
+    Args:
+        out: a rollout result.
+        course: the course flown (for gate_size, the natural error scale).
+        n_gates: gates on the course.
+        objective: "normalized" or "legacy".
+
+    Quality terms, each in [0, 1], higher better:
+        track   exp(-err / (gate_size/2)) -- a mean error of half a gate
+                scores 1/e. Uses the gate as the length scale rather than an
+                arbitrary constant, so it transfers across course sizes.
+        margin  1 - clipping fraction. The share of steps where the allocation
+                got the wrench it asked for. This is the geometry-sensitive
+                term: a layout with more moment per newton of differential
+                needs less differential and clips less.
+        survive 1 if the course was completed, else the fraction flown before
+                divergence.
+        speed   remaining time fraction if completed, else 0.
+    """
+    gates = out["gates"]
+    if objective == "legacy":
+        bonus = COMPLETION_BONUS * (1.0 - out["survival"]) if out["completed"] else 0.0
+        fit = (GATE_BONUS * gates + out["survival"]
+               - TRACK_WEIGHT * out["tracking_err"] + bonus)
+        return {"fitness": float(fit)}
+
+    if not np.isfinite(out["tracking_err"]):
+        track_q = 0.0
+    else:
+        track_q = float(np.exp(-out["tracking_err"] / max(course.gate_size / 2.0, 1e-9)))
+    margin_q = float(1.0 - min(max(out["saturation"], 0.0), 1.0))
+    survive_q = 1.0 if out["completed"] else float(min(max(out["survival"], 0.0), 1.0))
+    speed_q = float(1.0 - out["survival"]) if out["completed"] else 0.0
+
+    gate_score = 100.0 * gates / n_gates
+    per_gate = 100.0 / n_gates
+    budget = 0.5 * per_gate / len(QUALITY_TERMS)   # all four together < one gate
+    quality = budget * (track_q + margin_q + survive_q + speed_q)
+
+    return {
+        "fitness": float(gate_score + quality),
+        "gate_score": gate_score,
+        "quality": float(quality),
+        "q_track": track_q, "q_margin": margin_q,
+        "q_survive": survive_q, "q_speed": speed_q,
     }
 
 
@@ -311,11 +393,13 @@ def evaluate(genome, course, speed) -> dict:
     props = blueprint_to_propellers(
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
     out = rollout(props, course, speed)
-    return {**describe(genome), **{
-        "fitness": out["fit"], "gates": out["gates"],
+    scored = score(out, course, len(course.gate_pos), args.objective)
+    return {**describe(genome), **scored, **{
+        "gates": out["gates"],
         "gates_flown": out["gates_flown"], "survival": out["survival"],
         "tracking_err": out["tracking_err"], "completed": int(out["completed"]),
-        "saturation": out["saturation"],
+        "saturation": out["saturation"], "saturation_hi": out["saturation_hi"],
+        "saturation_lo": out["saturation_lo"],
     }}
 
 
