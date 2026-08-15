@@ -20,7 +20,8 @@ class DroneInterface:
     providing backward compatibility while enabling flexible drone configurations.
     """
 
-    def __init__(self, Ti, propellers=None, drone_type="quad", arm_length=0.11, prop_size=5):
+    def __init__(self, Ti, propellers=None, drone_type="quad", arm_length=0.11, prop_size=5,
+                 payload_mass=0.0):
         """
         Initialize drone interface.
 
@@ -30,13 +31,19 @@ class DroneInterface:
             drone_type: Standard drone type if propellers not specified
             arm_length: Arm length for standard configurations
             prop_size: Propeller size for standard configurations
+            payload_mass: Extra mass at the body origin, kg. Lets a blueprint
+                drone be flown at a representative weight -- the airframe mass
+                model never reads CorePlateNode.mass, so a blueprint quad is
+                ~0.093 kg against 0.83 kg for the SPEAR reference airframes.
         """
         # Create drone simulator
         if propellers is not None:
-            self.drone_sim = DroneSimulator(propellers=propellers, dt=0.005)
+            self.drone_sim = DroneSimulator(propellers=propellers, dt=0.005,
+                                            payload_mass=payload_mass)
         else:
             self.drone_sim = DroneSimulator.create_standard_drone(
-                drone_type, arm_length, prop_size, dt=0.005
+                drone_type, arm_length, prop_size, dt=0.005,
+                payload_mass=payload_mass,
             )
 
         # Get parameters in compatible format

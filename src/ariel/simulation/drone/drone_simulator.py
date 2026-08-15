@@ -54,7 +54,8 @@ class DroneSimulator:
     new dynamics path uses per-motor coefficients in `self.params` instead.
     """
 
-    def __init__(self, propellers=None, mountpoints=None, dt=0.005, gravity=9.81):
+    def __init__(self, propellers=None, mountpoints=None, dt=0.005, gravity=9.81,
+                 payload_mass=0.0):
         """
         Initialize drone simulator from propeller configuration.
 
@@ -67,6 +68,8 @@ class DroneSimulator:
                 DroneConfiguration does not currently consume it.
             dt (float): Integration time step
             gravity (float): Gravitational acceleration
+            payload_mass (float): extra mass at the body origin, kg (see
+                DroneConfiguration). Defaults to 0.0.
 
         Example:
             # Standard quadrotor
@@ -82,7 +85,7 @@ class DroneSimulator:
         if propellers is None:
             propellers = create_standard_propeller_config("quad", arm_length=0.11, prop_size=2)
 
-        self.config = DroneConfiguration(propellers)
+        self.config = DroneConfiguration(propellers, payload_mass=payload_mass)
 
         # Decorative — kept for API compatibility with consumers that read
         # them (e.g., scripts using get_params for the legacy controller).

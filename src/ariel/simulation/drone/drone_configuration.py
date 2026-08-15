@@ -28,16 +28,28 @@ class DroneConfiguration:
     - Moment allocation matrix (Bm) mapping motor commands to body moments
     """
     
-    def __init__(self, propellers):
+    def __init__(self, propellers, payload_mass=0.0):
         """
         Initialize drone configuration from propeller specifications.
-        
+
         Args:
             propellers (list): List of propeller dictionaries, each containing:
                 - "loc": [x, y, z] position in body frame (meters)
                 - "dir": [x, y, z, rotation] thrust direction and spin direction
                 - "propsize": propeller size in inches (4-8)
-                
+            payload_mass (float): extra mass carried at the body origin, kg.
+                Defaults to 0.0, so existing configurations are unchanged.
+
+                The airframe mass here is built from CONTROLLER_MASS +
+                BATTERY_MASS + per-prop mass + beam density, and never reads
+                ``CorePlateNode.mass`` from a blueprint. A blueprint quad
+                therefore weighs ~0.093 kg (thrust-to-weight ~9) where the
+                SPEAR reference airframes in examples/spear_vua_upb/spear are
+                0.83-1.25 kg with a 0.400 kg base link. ``payload_mass`` is the
+                minimal way to fly a representative airframe: it is treated as
+                a point mass at the origin, so it adds to mass and shifts the
+                CoG toward the origin, but contributes no inertia of its own.
+
         Example:
             propellers = [
                 {"loc": [0.11, 0.11, 0], "dir": [0, 0, -1, "ccw"], "propsize": 5},
@@ -50,6 +62,9 @@ class DroneConfiguration:
         
         self.propellers = propellers
         self.num_motors = len(propellers)
+        self.payload_mass = float(payload_mass)
+        if self.payload_mass < 0.0:
+            raise ValueError(f"payload_mass must be >= 0, got {payload_mass}")
         
         # Add propeller specifications to each propeller
         self._add_propeller_specs()
@@ -69,8 +84,8 @@ class DroneConfiguration:
     
     def _compute_mass_and_cg(self):
         """Compute total mass and center of gravity location."""
-        # Total mass = controller + battery + per-prop (propeller + beam).
-        self.mass = CONTROLLER_MASS + BATTERY_MASS
+        # Total mass = controller + battery + payload + per-prop (propeller + beam).
+        self.mass = CONTROLLER_MASS + BATTERY_MASS + self.payload_mass
         for prop in self.propellers:
             beam_length = norm(np.array(prop["loc"]))
             self.mass += prop["mass"] + BEAM_DENSITY * beam_length
@@ -104,6 +119,18 @@ class DroneConfiguration:
         self.Ixy = -CONTROLLER_MASS * self.cg[0] * self.cg[1]
         self.Ixz = -CONTROLLER_MASS * self.cg[0] * self.cg[2]
         self.Iyz = -CONTROLLER_MASS * self.cg[1] * self.cg[2]
+
+        # Payload contribution (point mass at the body origin). It has no
+        # inertia of its own, but sits at -cg relative to the CoG, so the
+        # parallel-axis term is kept for consistency with the other masses.
+        if self.payload_mass > 0.0:
+            r_pay = -self.cg
+            self.Ix += self.payload_mass * (r_pay[1] ** 2 + r_pay[2] ** 2)
+            self.Iy += self.payload_mass * (r_pay[0] ** 2 + r_pay[2] ** 2)
+            self.Iz += self.payload_mass * (r_pay[0] ** 2 + r_pay[1] ** 2)
+            self.Ixy -= self.payload_mass * r_pay[0] * r_pay[1]
+            self.Ixz -= self.payload_mass * r_pay[0] * r_pay[2]
+            self.Iyz -= self.payload_mass * r_pay[1] * r_pay[2]
 
         # Battery contribution (treated as a point mass at BATTERY_POS).
         r_bat = BATTERY_POS - self.cg
