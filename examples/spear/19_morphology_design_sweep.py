@@ -139,6 +139,16 @@ parser.add_argument("--feedforward", action="store_true",
                          "lag but overshoots in speed and sags in altitude, and "
                          "currently tracks worse overall. Needs control design "
                          "before it is usable.")
+parser.add_argument("--gate-counting", choices=("sequential", "flown"),
+                    default="sequential",
+                    help="sequential: GateChecker order, so the first gate "
+                         "missed ends the scoring run -- racing semantics, and "
+                         "a high-variance objective (12 counted vs 14 flown at "
+                         "4 m/s). flown: every gate the drone passed within "
+                         "half a gate of, regardless of order -- measures "
+                         "flight quality rather than run validity. The two can "
+                         "select different morphologies, so it is a real choice "
+                         "about what the task is.")
 parser.add_argument("--objective", choices=("normalized", "legacy"),
                     default="normalized",
                     help="normalized: gates out of 100 plus a quality budget "
@@ -265,19 +275,21 @@ def _build_stack(propellers, course, total_time):
     return drone, ctrl, traj, checker, wind
 
 
-def rollout(propellers, course, speed) -> dict:
+def rollout(propellers, course, speed, gate_counting="sequential") -> dict:
     total_time = course.traversal_time(speed, startup_time=STARTUP_TIME)
     sim_time = total_time * args.sim_margin
     try:
         drone, ctrl, traj, checker, wind = _build_stack(propellers, course, total_time)
     except Exception:
         return {"fit": None, "gates": 0, "survival": 0.0,
-                "tracking_err": float("inf"), "completed": False, "saturation": 1.0,
+                "tracking_err": float("inf"), "completed": False,
+                "completed_flown": False, "saturation": 1.0,
                 "saturation_hi": 1.0, "saturation_lo": 1.0, "gates_flown": 0}
 
     n_steps = int(sim_time / SIM_DT)
     w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
     tracking_sum, steps, sat, completed = 0.0, 0, 0, False
+    completed_flown = False
     # Split by bound: the upper one means 'not enough thrust', the lower one
     # means the allocation wanted a rotor to pull -- i.e. it ran out of
     # differential range for the commanded moment. On this course the lower
@@ -322,6 +334,12 @@ def rollout(propellers, course, speed) -> dict:
             if checker.gates_passed >= checker.num_gates:
                 completed = True
                 break
+            # Under "flown" counting the sequential checker may be locked out
+            # while the drone is still flying the course correctly, so the
+            # run ends when every gate has been passed within half a gate.
+            if gate_counting == "flown" and np.all(closest <= course.gate_size / 2.0):
+                completed_flown = True
+                break
     except Exception:
         pass
 
@@ -332,14 +350,16 @@ def rollout(propellers, course, speed) -> dict:
     return {
         "fit": None,   # scored by score(), which needs the course
         "gates": gates, "survival": survival, "tracking_err": tracking_err,
-        "completed": completed, "saturation": sat / steps if steps else 1.0,
+        "completed": completed, "completed_flown": completed or completed_flown,
+        "saturation": sat / steps if steps else 1.0,
         "saturation_hi": sat_hi / steps if steps else 1.0,
         "saturation_lo": sat_lo / steps if steps else 1.0,
         "gates_flown": gates_flown,
     }
 
 
-def score(out: dict, course, n_gates: int, objective: str) -> dict:
+def score(out: dict, course, n_gates: int, objective: str,
+          gate_counting: str = "sequential") -> dict:
     """Objective value plus its decomposition, so a score is auditable.
 
     Args:
@@ -347,6 +367,12 @@ def score(out: dict, course, n_gates: int, objective: str) -> dict:
         course: the course flown (for gate_size, the natural error scale).
         n_gates: gates on the course.
         objective: "normalized" or "legacy".
+        gate_counting: "sequential" (GateChecker order; the first miss ends the
+            run) or "flown" (every gate passed within half a gate, in any
+            order). These can rank morphologies differently -- a body that
+            clips one corner but flies the rest cleanly is near-worthless under
+            the first and near-perfect under the second -- so it is a choice
+            about the task, not a detail.
 
     Quality terms, each in [0, 1], higher better:
         track   exp(-err / (gate_size/2)) -- a mean error of half a gate
@@ -360,9 +386,10 @@ def score(out: dict, course, n_gates: int, objective: str) -> dict:
                 divergence.
         speed   remaining time fraction if completed, else 0.
     """
-    gates = out["gates"]
+    gates = out["gates_flown"] if gate_counting == "flown" else out["gates"]
+    completed = out["completed_flown"] if gate_counting == "flown" else out["completed"]
     if objective == "legacy":
-        bonus = COMPLETION_BONUS * (1.0 - out["survival"]) if out["completed"] else 0.0
+        bonus = COMPLETION_BONUS * (1.0 - out["survival"]) if completed else 0.0
         fit = (GATE_BONUS * gates + out["survival"]
                - TRACK_WEIGHT * out["tracking_err"] + bonus)
         return {"fitness": float(fit)}
@@ -372,8 +399,8 @@ def score(out: dict, course, n_gates: int, objective: str) -> dict:
     else:
         track_q = float(np.exp(-out["tracking_err"] / max(course.gate_size / 2.0, 1e-9)))
     margin_q = float(1.0 - min(max(out["saturation"], 0.0), 1.0))
-    survive_q = 1.0 if out["completed"] else float(min(max(out["survival"], 0.0), 1.0))
-    speed_q = float(1.0 - out["survival"]) if out["completed"] else 0.0
+    survive_q = 1.0 if completed else float(min(max(out["survival"], 0.0), 1.0))
+    speed_q = float(1.0 - out["survival"]) if completed else 0.0
 
     gate_score = 100.0 * gates / n_gates
     per_gate = 100.0 / n_gates
@@ -386,6 +413,7 @@ def score(out: dict, course, n_gates: int, objective: str) -> dict:
         "quality": float(quality),
         "q_track": track_q, "q_margin": margin_q,
         "q_survive": survive_q, "q_speed": speed_q,
+        "gates_counted": gates,
     }
 
 
@@ -393,11 +421,13 @@ def evaluate(genome, course, speed) -> dict:
     props = blueprint_to_propellers(
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
     out = rollout(props, course, speed)
-    scored = score(out, course, len(course.gate_pos), args.objective)
+    scored = score(out, course, len(course.gate_pos), args.objective,
+                   args.gate_counting)
     return {**describe(genome), **scored, **{
         "gates": out["gates"],
         "gates_flown": out["gates_flown"], "survival": out["survival"],
         "tracking_err": out["tracking_err"], "completed": int(out["completed"]),
+        "completed_flown": int(out["completed_flown"]),
         "saturation": out["saturation"], "saturation_hi": out["saturation_hi"],
         "saturation_lo": out["saturation_lo"],
     }}
