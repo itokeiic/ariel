@@ -139,6 +139,13 @@ parser.add_argument("--feedforward", action="store_true",
                          "lag but overshoots in speed and sags in altitude, and "
                          "currently tracks worse overall. Needs control design "
                          "before it is usable.")
+parser.add_argument("--n-courses", type=int, default=5,
+                    help="layouts to average over. One fixed layout selects the "
+                         "body that suits that layout; the simulator is "
+                         "deterministic, so this is the only sampling there is.")
+parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--jitter", type=float, default=0.25,
+                    help="per-corner turn-angle spread across the course set")
 parser.add_argument("--gate-counting", choices=("sequential", "flown"),
                     default="sequential",
                     help="sequential: GateChecker order, so the first gate "
@@ -161,6 +168,17 @@ args = parser.parse_args()
 RUN_ID = time.strftime("%Y%m%d_%H%M%S")
 DATA = Path(args.out_dir or f"__data__/morphology_design_sweep/{RUN_ID}")
 DATA.mkdir(parents=True, exist_ok=True)
+
+
+def make_courses() -> list:
+    """The course set every body is evaluated on."""
+    if args.n_courses <= 1:
+        return [slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                             gate_size=args.gate_size)]
+    return [slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                         gate_size=args.gate_size, seed=args.seed + k,
+                         jitter=args.jitter)
+            for k in range(args.n_courses)]
 
 
 # ── morphology ──────────────────────────────────────────────────────────────
@@ -256,7 +274,12 @@ def _build_stack(propellers, course, total_time):
         pos_P_gain=np.array([args.pos_gain] * 3),
         vel_P_gain=np.array([args.vel_gain] * 3),
     )
-    traj = Trajectory(drone, "xyz_pos", np.array([15, 3, 1]), gate_config=course)
+    # The trajectory flies the lead-out; only the detector sees scored gates.
+    # Without it the reference clamps on the final gate, and a drone arriving at
+    # speed overshoots by 2.1-2.7 m -- making that gate unreachable for every
+    # morphology and capping all of them at 14/15.
+    traj = Trajectory(drone, "xyz_pos", np.array([15, 3, 1]),
+                      gate_config=course.trajectory_config())
     # The shipped tension-based offsets only approximate interpolation. On a
     # 90 deg slalom the reference misses a gate centre by 0.52 m against a
     # 0.5 m half-width, i.e. the path the drone is asked to fly goes *outside*
@@ -275,7 +298,7 @@ def _build_stack(propellers, course, total_time):
     return drone, ctrl, traj, checker, wind
 
 
-def rollout(propellers, course, speed, gate_counting="sequential") -> dict:
+def rollout(propellers, course, speed) -> dict:
     total_time = course.traversal_time(speed, startup_time=STARTUP_TIME)
     sim_time = total_time * args.sim_margin
     try:
@@ -334,10 +357,10 @@ def rollout(propellers, course, speed, gate_counting="sequential") -> dict:
             if checker.gates_passed >= checker.num_gates:
                 completed = True
                 break
-            # Under "flown" counting the sequential checker may be locked out
-            # while the drone is still flying the course correctly, so the
-            # run ends when every gate has been passed within half a gate.
-            if gate_counting == "flown" and np.all(closest <= course.gate_size / 2.0):
+            # Terminate identically whichever rule is scored later, so both are
+            # read off the same flight rather than two runs that ended
+            # differently.
+            if np.all(closest <= course.gate_size / 2.0):
                 completed_flown = True
                 break
     except Exception:
@@ -417,28 +440,50 @@ def score(out: dict, course, n_gates: int, objective: str,
     }
 
 
-def evaluate(genome, course, speed) -> dict:
+def evaluate(genome, courses, speed) -> dict:
+    """Mean score over a set of courses, under both counting rules.
+
+    Averaging over layouts is what stops the sweep selecting the body that
+    happens to suit one gate arrangement -- with a deterministic simulator that
+    is the only sampling error there is. Both counting rules are scored from the
+    same rollouts, so the choice can be revisited without re-flying anything.
+    """
     props = blueprint_to_propellers(
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
-    out = rollout(props, course, speed)
-    scored = score(out, course, len(course.gate_pos), args.objective,
-                   args.gate_counting)
-    return {**describe(genome), **scored, **{
-        "gates": out["gates"],
-        "gates_flown": out["gates_flown"], "survival": out["survival"],
-        "tracking_err": out["tracking_err"], "completed": int(out["completed"]),
-        "completed_flown": int(out["completed_flown"]),
-        "saturation": out["saturation"], "saturation_hi": out["saturation_hi"],
-        "saturation_lo": out["saturation_lo"],
-    }}
+    outs, both = [], []
+    for course in courses:
+        o = rollout(props, course, speed)
+        outs.append(o)
+        both.append({m: score(o, course, len(course.gate_pos), args.objective, m)
+                     for m in ("sequential", "flown")})
+
+    def mean_of(key, mode=None):
+        if mode is None:
+            return float(np.mean([o[key] for o in outs]))
+        return float(np.mean([b[mode][key] for b in both]))
+
+    scored = {
+        "fitness": mean_of("fitness", args.gate_counting),
+        "fitness_sequential": mean_of("fitness", "sequential"),
+        "fitness_flown": mean_of("fitness", "flown"),
+    }
+    if args.objective == "normalized":
+        for k in ("gate_score", "quality", "q_track", "q_margin", "q_survive", "q_speed"):
+            scored[k] = mean_of(k, args.gate_counting)
+
+    rolled = {k: mean_of(k) for k in
+              ("gates", "gates_flown", "survival", "tracking_err",
+               "saturation", "saturation_hi", "saturation_lo",
+               "completed", "completed_flown")}
+    return {**describe(genome), **scored, **rolled}
 
 
 # ── modes ───────────────────────────────────────────────────────────────────
 
 def tracking_check() -> None:
     """Canonical X quad across speeds — is the controller usable up there?"""
-    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
-                          gate_size=args.gate_size)
+    courses = make_courses()
+    course = courses[0]
     genome = make_genome(np.pi / 4)
     d = describe(genome)
     console.rule(f"tracking check — X quad, {args.turn_deg:.0f}° slalom, "
@@ -448,7 +493,7 @@ def tracking_check() -> None:
     rows = []
     for speed in (2.0, 4.0, 6.0, 8.0):
         a_lat = course.lateral_acceleration(speed)
-        r = evaluate(genome, course, speed)
+        r = evaluate(genome, courses, speed)
         rows.append({"speed": speed, "a_lat": a_lat, **r})
         console.log(
             f"  {speed:>4.1f} m/s  a_lat={a_lat:5.1f}  gates={r['gates']:>2}/{args.n_gates} "
@@ -477,8 +522,8 @@ def design_map() -> list[dict]:
 
 
 def sweep_half_angle() -> list[dict]:
-    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
-                          gate_size=args.gate_size)
+    courses = make_courses()
+    course = courses[0]
     lo, hi = feasible_half_angle_range(ARM_LENGTH)
     console.rule(f"half-angle sweep — t ∈ [{np.degrees(lo):.1f}°, {np.degrees(hi):.1f}°], "
                  f"{args.turn_deg:.0f}° slalom at {args.speed} m/s")
@@ -491,7 +536,7 @@ def sweep_half_angle() -> list[dict]:
             console.log(f"  t={np.degrees(t):>5.1f}°  [red]OVERLAP[/red]")
             continue
         t0 = time.time()
-        r = evaluate(g, course, args.speed)
+        r = evaluate(g, courses, args.speed)
         rows.append({"half_angle_deg": float(np.degrees(t)), **r})
         console.log(
             f"  t={np.degrees(t):>5.1f}°  fit={r['fitness']:8.3f}  gates={r['gates']:>2}/{args.n_gates}  "
@@ -502,8 +547,7 @@ def sweep_half_angle() -> list[dict]:
 
 
 def sweep_arm_length() -> list[dict]:
-    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
-                          gate_size=args.gate_size)
+    courses = make_courses()
     console.rule(f"arm-length sweep — L ∈ [{min_arm_length():.3f}, 0.25] m, t = 45°")
     rows = []
     for L in np.linspace(min_arm_length(), 0.25, args.points):
@@ -511,7 +555,7 @@ def sweep_arm_length() -> list[dict]:
         if rotors_overlap(g) or rotor_hits_body(g):
             console.log(f"  L={L:.3f}  [red]INFEASIBLE[/red]")
             continue
-        r = evaluate(g, course, args.speed)
+        r = evaluate(g, courses, args.speed)
         rows.append({"arm_length": float(L), **r})
         console.log(
             f"  L={L:.3f} m  fit={r['fitness']:8.3f}  gates={r['gates']:>2}/{args.n_gates}  "
