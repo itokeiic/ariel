@@ -252,11 +252,23 @@ def rollout(propellers, course, speed) -> dict:
         drone, ctrl, traj, checker, wind = _build_stack(propellers, course, total_time)
     except Exception:
         return {"fit": float("-inf"), "gates": 0, "survival": 0.0,
-                "tracking_err": float("inf"), "completed": False, "saturation": 1.0}
+                "tracking_err": float("inf"), "completed": False, "saturation": 1.0,
+                "gates_flown": 0}
 
     n_steps = int(sim_time / SIM_DT)
     w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
     tracking_sum, steps, sat, completed = 0.0, 0, 0, False
+    # Tracking error is accumulated only while the course is running. After
+    # total_time the reference clamps at the final gate while the drone is
+    # still arriving, so post-course error swamps everything: at 4 m/s the
+    # cruise mean is 0.37 m and the post-course mean is 10.5 m, and a rollout
+    # average would report the latter as if it described tracking.
+    course_steps = 0
+    # Gates the drone actually flew through, independent of ordering. The
+    # sequential checker stops advancing at the first gate missed, so one bad
+    # corner reads as a near-zero score: at 4 m/s it counted 2/15 while the
+    # drone flew within half a gate of 11.
+    closest = np.full(len(course.gate_pos), np.inf)
     try:
         t, i = 0.0, 1
         while i <= n_steps:
@@ -265,11 +277,16 @@ def rollout(propellers, course, speed) -> dict:
             sDes = traj.desiredState(t_new, SIM_DT, drone)
             ctrl.controller(sDes, drone, traj.ctrlType, SIM_DT)
             checker.check_gate_passing(drone.pos)
-            tracking_sum += float(np.linalg.norm(drone.pos - sDes[:3]))
+            if t_new <= total_time:
+                tracking_sum += float(np.linalg.norm(drone.pos - sDes[:3]))
             w = np.asarray(ctrl.w_cmd, dtype=float)
             if np.any(w >= w_hi - 1e-6) or np.any(w <= w_lo + 1e-6):
                 sat += 1
             steps += 1
+            if t_new <= total_time:
+                course_steps += 1
+            closest = np.minimum(
+                closest, np.linalg.norm(course.gate_pos - drone.pos, axis=1))
             t, i = t_new, i + 1
             if checker.gates_passed >= checker.num_gates:
                 completed = True
@@ -278,13 +295,15 @@ def rollout(propellers, course, speed) -> dict:
         pass
 
     survival = steps / n_steps if n_steps else 0.0
-    tracking_err = tracking_sum / steps if steps else float("inf")
+    tracking_err = tracking_sum / course_steps if course_steps else float("inf")
     gates = int(checker.gates_passed)
+    gates_flown = int(np.sum(closest <= course.gate_size / 2.0))
     bonus = COMPLETION_BONUS * (1.0 - survival) if completed else 0.0
     return {
         "fit": GATE_BONUS * gates + survival - TRACK_WEIGHT * tracking_err + bonus,
         "gates": gates, "survival": survival, "tracking_err": tracking_err,
         "completed": completed, "saturation": sat / steps if steps else 1.0,
+        "gates_flown": gates_flown,
     }
 
 
@@ -293,7 +312,8 @@ def evaluate(genome, course, speed) -> dict:
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
     out = rollout(props, course, speed)
     return {**describe(genome), **{
-        "fitness": out["fit"], "gates": out["gates"], "survival": out["survival"],
+        "fitness": out["fit"], "gates": out["gates"],
+        "gates_flown": out["gates_flown"], "survival": out["survival"],
         "tracking_err": out["tracking_err"], "completed": int(out["completed"]),
         "saturation": out["saturation"],
     }}
@@ -317,7 +337,7 @@ def tracking_check() -> None:
         r = evaluate(genome, course, speed)
         rows.append({"speed": speed, "a_lat": a_lat, **r})
         console.log(
-            f"  {speed:>4.1f} m/s  a_lat={a_lat:5.1f}  gates={r['gates']:>2}/{args.n_gates}  "
+            f"  {speed:>4.1f} m/s  a_lat={a_lat:5.1f}  gates={r['gates']:>2}/{args.n_gates} "
             f"trk={r['tracking_err']:6.3f} m  sat={r['saturation']*100:5.1f}%  "
             f"fit={r['fitness']:8.3f}  {'completed' if r['completed'] else ''}")
     _write_csv(rows, DATA / f"tracking_check_{RUN_ID}.csv")

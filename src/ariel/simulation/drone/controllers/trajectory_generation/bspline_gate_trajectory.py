@@ -381,6 +381,16 @@ class BSplineGateTrajectory:
         # u_range / total_time. Using u_range / loop_time here -- as this did --
         # over-reports du/dt by total_time / loop_time, which is 22% for a 3 s
         # ramp on a 19.8 s course.
+        # The startup ramp accelerates from rest to loop_speed with zero jerk at
+        # both ends, so its mean rate is loop_speed/2 and it covers
+        # loop_speed * startup_time / 2 of parameter. Requiring it to cover the
+        # full loop_speed * startup_time instead -- as this did -- keeps the
+        # endpoints at 0 and loop_speed while doubling the mean, which forces
+        # the middle of the ramp far ABOVE cruise speed: measured peaks of
+        # 2.1-2.4x, so a "4 m/s" course demanded 5.67 m/s during startup and
+        # broke the vehicle before it ever reached cruise.
+        startup_fraction = 0.5
+
         if loop_time <= 0:
             loop_speed = 1.0
             loop_u_distance = u_range
@@ -388,8 +398,11 @@ class BSplineGateTrajectory:
             loop_speed = u_range / loop_time
             loop_u_distance = u_range
         else:
-            loop_speed = u_range / self.total_time if self.total_time > 0 else 0.0
-            loop_u_distance = max(u_range - loop_speed * self.startup_time, 0.0)
+            # Startup and loop together cover exactly u_range:
+            #   rate * (startup_fraction * startup_time + loop_time) = u_range
+            denom = startup_fraction * self.startup_time + loop_time
+            loop_speed = u_range / denom if denom > 0 else 0.0
+            loop_u_distance = max(u_range - loop_speed * startup_fraction * self.startup_time, 0.0)
 
         if t < self.startup_time:
             # Startup phase: quintic ramp from rest at u_start
@@ -404,8 +417,10 @@ class BSplineGateTrajectory:
             #   du/dt(0) = 0, d²u/dt²(0) = 0 (start from rest)
             #   du/dt(T) = loop_speed, d²u/dt²(T) = 0 (match loop speed)
 
-            # Distance traveled during startup at constant loop speed
-            startup_u_distance = loop_speed * T
+            # Distance covered by a rest-to-loop_speed ramp with zero jerk at
+            # both ends. Half of what constant speed would cover -- see the
+            # note on startup_fraction above.
+            startup_u_distance = loop_speed * T * startup_fraction
 
             # Solve quintic system for coefficients
             A = np.array([
@@ -441,8 +456,8 @@ class BSplineGateTrajectory:
                     # Clamp for non-periodic: traverse once then hold at end
                     t_normalized = min(t_loop / loop_time, 1.0)
 
-                # Start from where startup ended and traverse full u_range
-                u_startup_end = u_start + loop_speed * self.startup_time
+                # Start from where startup ended and traverse the remainder
+                u_startup_end = u_start + loop_speed * self.startup_time * startup_fraction
                 u = u_startup_end + loop_u_distance * t_normalized
                 du_dt = loop_speed * self.velocity_scale
             else:
