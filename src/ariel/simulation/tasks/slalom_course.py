@@ -175,6 +175,28 @@ def slalom_gates(
     # consecutive legs is (theta_i + theta_i+1)/2 -- exactly turn_deg when
     # uniform.
     signs = (-1.0) ** np.arange(n_legs)
+    if rng is not None:
+        # Zero the net heading change. Leg directions alternate +/- theta_i/2,
+        # so with random theta the alternating deviations do not cancel and the
+        # course curves away from its axis -- measured up to 1.85 m over 16
+        # legs. That is a second, uncontrolled difficulty axis (a sustained
+        # turn) on top of the corner sharpness this parameter is meant to vary.
+        # Removing the residual shifts each angle by a fraction of a degree and
+        # leaves the corner range identical.
+        # Lateral displacement is sum(leg * sin(a_i)), not sum(a_i), so zeroing
+        # the angles only approximates zero drift (1.85 m -> 0.29 m). Shifting
+        # every theta_i by signs_i*delta shifts every leg direction by the same
+        # -delta/2, i.e. rotates the course, so one Newton step per iteration on
+        # d(sum sin a)/d(delta) = -sum(cos a)/2 converges in two or three.
+        for _ in range(6):
+            a = signs * thetas / 2.0
+            drift = float(np.sum(np.sin(a)))
+            if abs(drift) < 1e-13:
+                break
+            denom = 0.5 * float(np.sum(np.cos(a)))
+            if abs(denom) < 1e-12:
+                break
+            thetas = thetas - signs * (drift / denom)
     leg_dir = signs * thetas / 2.0
 
     spacing = float(np.mean(leg * np.cos(thetas / 2.0)))
