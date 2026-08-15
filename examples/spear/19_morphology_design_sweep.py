@@ -1,0 +1,414 @@
+"""Does static arm geometry matter for flying a slalom?
+
+Groundwork for mid-flight morphing: before making arm sweep a live DOF, find
+out whether holding it at different angles changes anything, and where the
+useful range is. Every configuration here is a *static* setting, which is
+identical to holding a revolute arm joint at a fixed angle, so the answer
+transfers directly to a joint target once the articulated plant exists.
+
+What this fixes, relative to the first attempt at this question
+--------------------------------------------------------------
+That sweep found fitness invariant to morphology (0.000 spread across a full
+rotation, 0.011 across a 3x arm-length change). Four reasons, all addressed:
+
+* The quintic circuits turn a median of 0.4 deg -- they never ask the airframe
+  for anything. Replaced by a slalom whose turn angle is an explicit knob
+  (``ariel.simulation.tasks.slalom_course``).
+* The drone was 0.093 kg with 2" props (thrust-to-weight 8.9), so a 2 m/s
+  course used 3% of its lateral budget. Now SPEAR-matched: 0.83 kg, 5" props,
+  0.20 m arms, TWR 5.2, matching ``symmetric_4rotor`` in
+  ``examples/spear_vua_upb/spear``.
+* Speed was implicit. Now a fixed nominal speed, so a tighter course is harder
+  because of curvature rather than because it is also flown faster.
+* ``cond(mixerFM)`` was the instrument, and it is constant for coplanar rotors.
+  Replaced by per-axis angular acceleration plus airevolve's maneuverability.
+
+Why azimuth and length are the honest axes to sweep here: ``DroneSimulator``'s
+plant reads each rotor's ``loc`` but ignores its thrust normal (see
+``dynamics_params._guard_axial_thrust``). Both axes move exactly what the plant
+models and leave the normals axial, so the guard stays silent for every body
+below. Arm elevation and motor cant would not be trustworthy until the plant is
+normal-aware.
+
+Run:
+    uv run examples/spear/19_morphology_design_sweep.py --tracking-check
+    uv run examples/spear/19_morphology_design_sweep.py --map-only
+    uv run examples/spear/19_morphology_design_sweep.py --turn-deg 90 --speed 6
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+from rich.console import Console
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO_ROOT / "examples" / "d_drones"))
+from _ctrl_helpers import GateChecker  # noqa: E402
+
+from ariel.body_phenotypes.drone.backends import blueprint_to_propellers
+from ariel.body_phenotypes.drone.decoders import spherical_angular_to_blueprint
+from ariel.ec.drone.genome_handlers.conversions.arm_conversions import (
+    arms_to_cylinders_polar_angular,
+)
+from ariel.ec.drone.genome_handlers.operators.particle_repair_operator import (
+    are_there_cylinder_collisions,
+)
+from ariel.simulation.drone.controllers.lee_control.lee_controller import (
+    LeeGeometricControl,
+)
+from ariel.simulation.drone.controllers.trajectory_generation.trajectory import (
+    Trajectory,
+)
+from ariel.simulation.drone.controllers.utils.wind_model import Wind
+from ariel.simulation.drone.drone_configuration import DroneConfiguration
+from ariel.simulation.drone.drone_interface import DroneInterface
+from ariel.simulation.drone.plant import (
+    RotorGeometry,
+    maneuverability,
+    moment_allocation,
+    rank_controllability,
+)
+from ariel.simulation.tasks.slalom_course import slalom_gates
+
+console = Console()
+
+# ── airframe: SPEAR symmetric_4rotor ────────────────────────────────────────
+PROP_SIZE      = 5
+PROP_RADIUS    = 0.0635          # 5" prop, matching every SPEAR xacro
+CORE_RADIUS    = 0.05            # CorePlateNode default
+PAYLOAD_MASS   = 0.667           # -> 0.829 kg total, TWR 5.24
+ARM_LENGTH     = 0.20
+N_ARMS         = 4               # a quad has no allocation redundancy
+CLEARANCE_TOL  = 0.1             # same 10% margin the repair operator uses
+
+# ── controller / rollout ────────────────────────────────────────────────────
+SIM_DT         = 0.005
+LEE_POS_GAIN   = 14.3
+LEE_VEL_GAIN   = 9.0
+STARTUP_TIME   = 3.0             # BSplineGateTrajectory default
+GATE_BONUS       = 10.0
+TRACK_WEIGHT     = 0.1
+COMPLETION_BONUS = 10.0
+
+parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+parser.add_argument("--turn-deg", type=float, default=90.0)
+parser.add_argument("--leg", type=float, default=2.4)
+parser.add_argument("--n-gates", type=int, default=15)
+parser.add_argument("--gate-size", type=float, default=1.0)
+parser.add_argument("--speed", type=float, default=6.0, help="nominal m/s")
+parser.add_argument("--points", type=int, default=11)
+parser.add_argument("--sim-margin", type=float, default=1.6,
+                    help="rollout time = traversal time x this")
+parser.add_argument("--tracking-check", action="store_true",
+                    help="canonical X quad at several speeds; establishes the "
+                         "usable speed range before any morphology work")
+parser.add_argument("--map-only", action="store_true",
+                    help="feasibility + maneuverability map only, no rollouts")
+parser.add_argument("--pos-gain", type=float, default=LEE_POS_GAIN)
+parser.add_argument("--vel-gain", type=float, default=LEE_VEL_GAIN)
+parser.add_argument("--max-accel", type=float, default=5.0,
+                    help="commanded-acceleration clamp, m/s^2. The library "
+                         "default of 5.0 is below what a fast course demands "
+                         "(21 m/s^2 at 6 m/s here) and below what the airframe "
+                         "can deliver (50 m/s^2), so while it binds every "
+                         "morphology is limited by the same constant. Raising "
+                         "it alone does NOT fix tracking -- see --feedforward.")
+parser.add_argument("--feedforward", action="store_true",
+                    help="feed the trajectory's velocity and acceleration to "
+                         "the position controller. Off by default because the "
+                         "controller is not tuned for it: it removes the ~0.25 s "
+                         "lag but overshoots in speed and sags in altitude, and "
+                         "currently tracks worse overall. Needs control design "
+                         "before it is usable.")
+parser.add_argument("--out-dir", default=None)
+args = parser.parse_args()
+
+RUN_ID = time.strftime("%Y%m%d_%H%M%S")
+DATA = Path(args.out_dir or f"__data__/morphology_design_sweep/{RUN_ID}")
+DATA.mkdir(parents=True, exist_ok=True)
+
+
+# ── morphology ──────────────────────────────────────────────────────────────
+
+def make_genome(half_angle: float, arm_length: float = ARM_LENGTH) -> np.ndarray:
+    """Bilaterally symmetric quad: arms at +/-t and 180 +/- t.
+
+    Columns: [length, arm_az, arm_elevation, motor_az, motor_pitch, spin].
+    Elevation and motor pitch stay 0, so thrust normals remain axial and the
+    reduced plant models this airframe correctly.
+    """
+    az = np.array([half_angle, np.pi - half_angle, np.pi + half_angle, -half_angle])
+    g = np.zeros((N_ARMS, 6), dtype=float)
+    g[:, 0] = arm_length
+    g[:, 1] = az
+    g[:, 3] = np.pi
+    g[:, 5] = np.arange(N_ARMS) % 2
+    return g
+
+
+def feasible_half_angle_range(arm_length: float) -> tuple[float, float]:
+    """Half-angles whose propeller discs clear each other, radians.
+
+    Neighbouring rotors are 2*L*sin(t) and 2*L*cos(t) apart, and both must
+    exceed 2*(1+tol)*r.
+    """
+    c = (1.0 + CLEARANCE_TOL) * PROP_RADIUS / arm_length
+    if c >= 1.0:
+        raise ValueError(f"no clearing half-angle exists at arm length {arm_length} m")
+    return float(np.arcsin(c)), float(np.pi / 2 - np.arcsin(c))
+
+
+def min_arm_length() -> float:
+    """Shortest arm whose propeller disc clears the core plate.
+
+    Not covered by the collision test, which only compares arm cylinders with
+    each other -- nothing today stops a rotor from intersecting the body.
+    """
+    return CORE_RADIUS + (1.0 + CLEARANCE_TOL) * PROP_RADIUS
+
+
+def rotors_overlap(genome: np.ndarray) -> bool:
+    return bool(are_there_cylinder_collisions(
+        arms_to_cylinders_polar_angular(genome, propeller_radius=PROP_RADIUS)
+    ))
+
+
+def rotor_hits_body(genome: np.ndarray) -> bool:
+    return bool(np.any(genome[:, 0] < min_arm_length()))
+
+
+def describe(genome: np.ndarray) -> dict:
+    """Geometry-only metrics; no simulation."""
+    bp = spherical_angular_to_blueprint(genome, propsize=PROP_SIZE)
+    props_zup = blueprint_to_propellers(bp, convention="z_up")
+    cfg = DroneConfiguration(props_zup, payload_mass=PAYLOAD_MASS)
+    kf, km = cfg.propellers[0]["constants"]
+    geom = RotorGeometry(
+        positions=np.array([p["loc"] for p in props_zup], dtype=float),
+        axes=np.array([p["dir"][:3] for p in props_zup], dtype=float),
+        spins=np.array([1.0 if p["dir"][3] == "ccw" else -1.0 for p in props_zup]),
+    )
+    ratio = km / kf
+    alpha = moment_allocation(geom, torque_to_thrust_ratio=ratio,
+                              inertia=cfg.inertia_matrix)
+    return {
+        "mass": float(cfg.mass),
+        "twr": float(kf * cfg.propellers[0]["wmax"] ** 2 * N_ARMS / (cfg.mass * 9.81)),
+        "alpha_roll": float(np.linalg.norm(alpha[0])),
+        "alpha_pitch": float(np.linalg.norm(alpha[1])),
+        "alpha_yaw": float(np.linalg.norm(alpha[2])),
+        "maneuverability": maneuverability(geom, torque_to_thrust_ratio=ratio),
+        "maneuverability_I": maneuverability(geom, torque_to_thrust_ratio=ratio,
+                                             inertia=cfg.inertia_matrix),
+        "rank_Bm": rank_controllability(geom, torque_to_thrust_ratio=ratio),
+    }
+
+
+# ── rollout ─────────────────────────────────────────────────────────────────
+
+def _build_stack(propellers, course, total_time):
+    drone = DroneInterface(0, propellers=propellers, payload_mass=PAYLOAD_MASS)
+    wind = Wind("None")
+    ctrl = LeeGeometricControl(
+        drone, yawType=1, orient="NED", auto_scale_gains=True,
+        # Both off by default in the library, and both must be on to fly an
+        # aggressive trajectory: without feedforward the controller lags a
+        # moving reference by ~0.25 s, and the 5 m/s^2 default clamp sits far
+        # below what this course demands (21 m/s^2) or the airframe can deliver
+        # (50 m/s^2), so every morphology would be limited by the same constant.
+        velocity_feedforward=args.feedforward,
+        max_accel=args.max_accel,
+        pos_P_gain=np.array([args.pos_gain] * 3),
+        vel_P_gain=np.array([args.vel_gain] * 3),
+    )
+    traj = Trajectory(drone, "xyz_pos", np.array([15, 3, 1]), gate_config=course)
+    # The shipped tension-based offsets only approximate interpolation. On a
+    # 90 deg slalom the reference misses a gate centre by 0.52 m against a
+    # 0.5 m half-width, i.e. the path the drone is asked to fly goes *outside*
+    # the gate. Solve the offsets exactly instead.
+    traj.bspline_trajectory.fit_offsets_to_gates()
+    traj.bspline_trajectory.total_time = total_time
+
+    drone.drone_sim.set_state(
+        position=np.asarray(course.starting_pos, dtype=np.float64),
+        velocity=np.zeros(3), attitude=np.zeros(3), angular_velocity=np.zeros(3),
+    )
+    drone._update_state_variables()
+    checker = GateChecker(course.gate_pos, course.gate_yaw, course.gate_size)
+    checker.check_gate_passing(drone.pos)
+    ctrl.controller(traj.desiredState(0.0, SIM_DT, drone), drone, traj.ctrlType, SIM_DT)
+    return drone, ctrl, traj, checker, wind
+
+
+def rollout(propellers, course, speed) -> dict:
+    total_time = course.traversal_time(speed, startup_time=STARTUP_TIME)
+    sim_time = total_time * args.sim_margin
+    try:
+        drone, ctrl, traj, checker, wind = _build_stack(propellers, course, total_time)
+    except Exception:
+        return {"fit": float("-inf"), "gates": 0, "survival": 0.0,
+                "tracking_err": float("inf"), "completed": False, "saturation": 1.0}
+
+    n_steps = int(sim_time / SIM_DT)
+    w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
+    tracking_sum, steps, sat, completed = 0.0, 0, 0, False
+    try:
+        t, i = 0.0, 1
+        while i <= n_steps:
+            drone.update(t, SIM_DT, ctrl.w_cmd, wind)
+            t_new = SIM_DT * i
+            sDes = traj.desiredState(t_new, SIM_DT, drone)
+            ctrl.controller(sDes, drone, traj.ctrlType, SIM_DT)
+            checker.check_gate_passing(drone.pos)
+            tracking_sum += float(np.linalg.norm(drone.pos - sDes[:3]))
+            w = np.asarray(ctrl.w_cmd, dtype=float)
+            if np.any(w >= w_hi - 1e-6) or np.any(w <= w_lo + 1e-6):
+                sat += 1
+            steps += 1
+            t, i = t_new, i + 1
+            if checker.gates_passed >= checker.num_gates:
+                completed = True
+                break
+    except Exception:
+        pass
+
+    survival = steps / n_steps if n_steps else 0.0
+    tracking_err = tracking_sum / steps if steps else float("inf")
+    gates = int(checker.gates_passed)
+    bonus = COMPLETION_BONUS * (1.0 - survival) if completed else 0.0
+    return {
+        "fit": GATE_BONUS * gates + survival - TRACK_WEIGHT * tracking_err + bonus,
+        "gates": gates, "survival": survival, "tracking_err": tracking_err,
+        "completed": completed, "saturation": sat / steps if steps else 1.0,
+    }
+
+
+def evaluate(genome, course, speed) -> dict:
+    props = blueprint_to_propellers(
+        spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
+    out = rollout(props, course, speed)
+    return {**describe(genome), **{
+        "fitness": out["fit"], "gates": out["gates"], "survival": out["survival"],
+        "tracking_err": out["tracking_err"], "completed": int(out["completed"]),
+        "saturation": out["saturation"],
+    }}
+
+
+# ── modes ───────────────────────────────────────────────────────────────────
+
+def tracking_check() -> None:
+    """Canonical X quad across speeds — is the controller usable up there?"""
+    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                          gate_size=args.gate_size)
+    genome = make_genome(np.pi / 4)
+    d = describe(genome)
+    console.rule(f"tracking check — X quad, {args.turn_deg:.0f}° slalom, "
+                 f"R={course.radius:.2f} m")
+    console.log(f"airframe: {d['mass']:.3f} kg, TWR {d['twr']:.2f}, "
+                f"lateral budget {9.81*np.sqrt(max(d['twr']**2-1,0)):.0f} m/s²")
+    rows = []
+    for speed in (2.0, 4.0, 6.0, 8.0):
+        a_lat = course.lateral_acceleration(speed)
+        r = evaluate(genome, course, speed)
+        rows.append({"speed": speed, "a_lat": a_lat, **r})
+        console.log(
+            f"  {speed:>4.1f} m/s  a_lat={a_lat:5.1f}  gates={r['gates']:>2}/{args.n_gates}  "
+            f"trk={r['tracking_err']:6.3f} m  sat={r['saturation']*100:5.1f}%  "
+            f"fit={r['fitness']:8.3f}  {'completed' if r['completed'] else ''}")
+    _write_csv(rows, DATA / f"tracking_check_{RUN_ID}.csv")
+
+
+def design_map() -> list[dict]:
+    """Feasibility + geometry metrics over (half-angle x arm length). No rollouts."""
+    lengths = np.linspace(min_arm_length(), 0.25, 8)
+    rows = []
+    for L in lengths:
+        lo, hi = feasible_half_angle_range(L)
+        for t in np.linspace(np.deg2rad(10), np.deg2rad(80), 15):
+            g = make_genome(float(t), arm_length=float(L))
+            ov, body = rotors_overlap(g), rotor_hits_body(g)
+            row = {"half_angle_deg": float(np.degrees(t)), "arm_length": float(L),
+                   "rotor_overlap": int(ov), "rotor_body": int(body),
+                   "analytic_ok": int(lo <= t <= hi)}
+            if not (ov or body):
+                row.update(describe(g))
+            rows.append(row)
+    _write_csv(rows, DATA / f"design_map_{RUN_ID}.csv")
+    return rows
+
+
+def sweep_half_angle() -> list[dict]:
+    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                          gate_size=args.gate_size)
+    lo, hi = feasible_half_angle_range(ARM_LENGTH)
+    console.rule(f"half-angle sweep — t ∈ [{np.degrees(lo):.1f}°, {np.degrees(hi):.1f}°], "
+                 f"{args.turn_deg:.0f}° slalom at {args.speed} m/s")
+    console.log(f"course: R={course.radius:.2f} m, a_lat={course.lateral_acceleration(args.speed):.1f} m/s², "
+                f"traversal {course.traversal_time(args.speed, STARTUP_TIME):.2f} s")
+    rows = []
+    for t in np.linspace(lo, hi, args.points):
+        g = make_genome(float(t))
+        if rotors_overlap(g):
+            console.log(f"  t={np.degrees(t):>5.1f}°  [red]OVERLAP[/red]")
+            continue
+        t0 = time.time()
+        r = evaluate(g, course, args.speed)
+        rows.append({"half_angle_deg": float(np.degrees(t)), **r})
+        console.log(
+            f"  t={np.degrees(t):>5.1f}°  fit={r['fitness']:8.3f}  gates={r['gates']:>2}/{args.n_gates}  "
+            f"trk={r['tracking_err']:6.3f}  sat={r['saturation']*100:5.1f}%  "
+            f"α_roll={r['alpha_roll']:6.1f}  ({time.time()-t0:.1f}s)")
+    _write_csv(rows, DATA / f"half_angle_{RUN_ID}.csv")
+    return rows
+
+
+def sweep_arm_length() -> list[dict]:
+    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                          gate_size=args.gate_size)
+    console.rule(f"arm-length sweep — L ∈ [{min_arm_length():.3f}, 0.25] m, t = 45°")
+    rows = []
+    for L in np.linspace(min_arm_length(), 0.25, args.points):
+        g = make_genome(np.pi / 4, arm_length=float(L))
+        if rotors_overlap(g) or rotor_hits_body(g):
+            console.log(f"  L={L:.3f}  [red]INFEASIBLE[/red]")
+            continue
+        r = evaluate(g, course, args.speed)
+        rows.append({"arm_length": float(L), **r})
+        console.log(
+            f"  L={L:.3f} m  fit={r['fitness']:8.3f}  gates={r['gates']:>2}/{args.n_gates}  "
+            f"trk={r['tracking_err']:6.3f}  sat={r['saturation']*100:5.1f}%  "
+            f"α_roll={r['alpha_roll']:6.1f}  λ_I={r['maneuverability_I']:.3g}")
+    _write_csv(rows, DATA / f"arm_length_{RUN_ID}.csv")
+    return rows
+
+
+def _write_csv(rows: list[dict], path: Path) -> None:
+    if not rows:
+        return
+    keys: list[str] = []
+    for r in rows:
+        for k in r:
+            if k not in keys:
+                keys.append(k)
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=keys)
+        w.writeheader()
+        w.writerows(rows)
+    console.log(f"  → {path}")
+
+
+if __name__ == "__main__":
+    if args.tracking_check:
+        tracking_check()
+    elif args.map_only:
+        design_map()
+    else:
+        design_map()
+        sweep_half_angle()
+        sweep_arm_length()
+    console.log("[bold green]done[/bold green]")
