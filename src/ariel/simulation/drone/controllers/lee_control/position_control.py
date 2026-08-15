@@ -12,19 +12,30 @@ class LeePositionController(BaseLeeController):
         self.orient = orient
         self.init_controller_gains()
 
-    def update(self, command_actions):
+    def update(self, command_actions, setpoint_velocity=None,
+               feedforward_accel=None):
         """
         Lee position controller
         :param command_actions: array of shape (4,) with [px, py, pz, yaw] position setpoint and yaw command
+        :param setpoint_velocity: optional world-frame velocity setpoint (3,).
+            Defaults to zero, which is correct for holding a point but makes
+            the controller lag a *moving* reference by roughly the closed-loop
+            time constant -- measured at ~0.25 s on a slalom, i.e. a tracking
+            error of 0.25*speed metres that no gain increase removes. Pass the
+            trajectory's velocity to track rather than chase.
         :return: wrench command [fx, fy, fz, tx, ty, tz]
         """
         command_actions = np.array(command_actions)
         self.reset_commands()
-        
+
+        if setpoint_velocity is None:
+            setpoint_velocity = np.zeros(3)
+
         # Compute desired acceleration
         self.accel = self.compute_acceleration(
             setpoint_position=command_actions[0:3],
-            setpoint_velocity=np.zeros(3),  # Zero velocity setpoint
+            setpoint_velocity=np.asarray(setpoint_velocity, dtype=float),
+            feedforward_accel=feedforward_accel,
         )
         
         # Convert acceleration to forces (WORLD frame)

@@ -43,6 +43,8 @@ class LeeGeometricControl:
                  att_P_gain=None,                           # Attitude gains [kR_roll, kR_pitch, kR_yaw]
                  rate_P_gain=None,                          # Angular rate gains
                  auto_scale_gains=False,                    # Scale att/rate gains by inertia
+                 velocity_feedforward=False,                # Track the trajectory's velocity
+                 max_accel=5.0,                             # Commanded-acceleration clamp, m/s^2
                  # Interface compatibility (unused parameters for compatibility with PID controllers)
                  **kwargs):                                 # Catches vel_D_gain, vel_I_gain, rate_D_gain, tilt_max, rate_max, vel_max, etc.
         """
@@ -75,6 +77,8 @@ class LeeGeometricControl:
         self.drone_config = quad.drone_sim.config
         self.num_motors = self.drone_config.num_motors
         self.orient = orient
+        self.velocity_feedforward = bool(velocity_feedforward)
+        self.max_accel = float(max_accel)
 
         # Built-in defaults (calibrated for ~1 kg drone with heavy inertia).
         if pos_P_gain is None:
@@ -145,8 +149,10 @@ class LeeGeometricControl:
                 self.K_angvel_tensor_min = rate_gains
                 self.randomize_params = False
                 self.max_yaw_rate = 2.0
+                self.max_accel = 5.0
         
         config = LeeConfig(self.pos_P_gain, self.vel_P_gain, self.att_P_gain, self.rate_P_gain)
+        config.max_accel = self.max_accel
         
         # Get drone properties
         mass = quad.params["mB"]
@@ -200,7 +206,8 @@ class LeeGeometricControl:
         if (ctrl_type == "xyz_vel"):
             self._lee_velocity_control(vel_sp, quad, Ts, yawFF)
         elif (ctrl_type == "xyz_pos"):
-            self._lee_position_control(pos_sp, eul_sp, quad, Ts)
+            self._lee_position_control(pos_sp, eul_sp, quad, Ts, vel_sp=vel_sp,
+                                       acc_sp=sDes[6:9].copy())
         
         # Convert Lee control output to motor commands
         self._wrench_to_motor_commands(quad)
@@ -247,7 +254,7 @@ class LeeGeometricControl:
         # Store desired orientation for logging
         self.desired_orientation = self.velocity_controller.desired_quat
         
-    def _lee_position_control(self, pos_sp, eul_sp, quad, Ts):
+    def _lee_position_control(self, pos_sp, eul_sp, quad, Ts, vel_sp=None, acc_sp=None):
         """Lee geometric position control"""
         # Update position controller state
         self._update_lee_controller_state(quad)
@@ -255,8 +262,14 @@ class LeeGeometricControl:
         # Create position command: [px, py, pz, yaw]
         command_actions = np.concatenate([pos_sp, [eul_sp[2]]])
         
-        # Use position controller
-        self.wrench_command = self.position_controller.update(command_actions)
+        # Use position controller. vel_sp is the trajectory's velocity; without
+        # it the controller aims at a moving point with a zero velocity target
+        # and lags by ~0.25 s regardless of gains.
+        self.wrench_command = self.position_controller.update(
+            command_actions,
+            setpoint_velocity=vel_sp if self.velocity_feedforward else None,
+            feedforward_accel=acc_sp if self.velocity_feedforward else None,
+        )
         
         # Store desired orientation for logging
         self.desired_orientation = self.position_controller.desired_quat
@@ -267,19 +280,32 @@ class LeeGeometricControl:
         force_command = self.wrench_command[0:3]
         moment_command = self.wrench_command[3:6]
 
-        # FIXED: Use Z-component like PX4 controller, not magnitude
-        # The thrust command represents the motor thrust magnitude (always positive)
-        # In NED: force Z is negative for upward, so negate to get positive thrust
-        # In ENU: force Z is positive for upward, use directly
-        if self.orient == "NED":
-            # In NED: negate Z component to convert upward force to positive thrust
-            thrust_command = -force_command[2]
-            # Debug: remove after confirming fix
-            if abs(thrust_command) > 100 or thrust_command < 0:
-                print(f"WARNING: Unusual thrust_command = {thrust_command:.2f} N from force = {force_command}")
-        else:  # ENU
-            # In ENU: Z component is already positive for upward
-            thrust_command = force_command[2]
+        # Project the desired force onto the body thrust axis: f = F · (R e3).
+        #
+        # This previously took the *world* z-component of the force. PX4 does
+        # project rather than take a magnitude, but it projects onto the BODY z
+        # axis, which the attitude loop has tilted to align with the desired
+        # force. World z equals body z only in level flight, and the error is
+        # cos(tilt): at the 71 deg of bank a hard slalom corner needs, a 34.9 N
+        # force command produced an 11.1 N thrust command, so the drone could
+        # neither hold altitude nor deliver the cornering acceleration. Small
+        # for the gentle courses this was tuned on (~1% at 7-10 deg), decisive
+        # for aggressive ones.
+        dcm = getattr(quad, "dcm", None)
+        if dcm is None:
+            body_z_world = np.array([0.0, 0.0, 1.0])
+        else:
+            body_z_world = np.asarray(dcm, dtype=float)[:, 2]
+
+        # In NED the body z axis points down and thrust acts along -z, so the
+        # projection is negated to give a positive thrust magnitude.
+        projection = float(np.dot(force_command, body_z_world))
+        thrust_command = -projection if self.orient == "NED" else projection
+
+        # A negative projection means the commanded force points opposite the
+        # thrust axis; a unidirectional rotor cannot produce it, so command zero
+        # and let the attitude loop rotate the vehicle instead.
+        thrust_command = max(thrust_command, 0.0)
         
         # `compute_body_torque` already emits Lee's M_des in physical body N·m,
         # and the mixerFM rows are physical (T per W², τ per W²), so we pass the

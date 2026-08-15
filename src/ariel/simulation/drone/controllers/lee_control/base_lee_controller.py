@@ -104,8 +104,16 @@ class BaseLeeController:
         self.K_rot_current = rand_float_uniform(self.K_rot_min, self.K_rot_max)
         self.K_angvel_current = rand_float_uniform(self.K_angvel_min, self.K_angvel_max)
 
-    def compute_acceleration(self, setpoint_position, setpoint_velocity):
-        """Compute desired acceleration from position and velocity setpoints"""
+    def compute_acceleration(self, setpoint_position, setpoint_velocity,
+                             feedforward_accel=None):
+        """Compute desired acceleration from position and velocity setpoints.
+
+        ``feedforward_accel`` is the trajectory's own acceleration. Without it
+        the loop can only produce acceleration in response to an error that has
+        already happened, so on a curved path the drone lags into every corner;
+        supplying it lets the feedback terms correct a small residual instead of
+        generating the whole cornering acceleration.
+        """
         position_error_world_frame = np.array(setpoint_position) - self.robot_position
         
         # setpoint_velocity is already in world frame, no rotation needed
@@ -116,9 +124,19 @@ class BaseLeeController:
             self.K_pos_current * position_error_world_frame
             + self.K_linvel_current * velocity_error
         )
+        if feedforward_accel is not None:
+            accel_command = accel_command + np.asarray(feedforward_accel, dtype=float)
         
-        # FIXED: Much more aggressive saturation to prevent force explosion
-        max_accel = 5.0  # m/s² (conservative limit - was 20.0 causing huge forces)
+        # Saturation on commanded acceleration. The 5.0 m/s² default is a
+        # conservative guard against force explosion, but it is a *software*
+        # limit that sits well below what an airframe can physically do: a
+        # SPEAR-matched quad (thrust-to-weight 5.2) has a 50 m/s² lateral
+        # budget, and a 90° slalom flown at 6 m/s demands 21 m/s². While this
+        # clamp binds, every airframe is limited by the same constant rather
+        # than by its own geometry or thrust — which makes any morphology
+        # comparison measure the clamp. Raise it via ``cfg.max_accel`` when
+        # tracking an aggressive trajectory.
+        max_accel = float(getattr(self.cfg, "max_accel", 5.0))
         accel_magnitude = np.linalg.norm(accel_command)
         if accel_magnitude > max_accel:
             accel_command = accel_command / accel_magnitude * max_accel
