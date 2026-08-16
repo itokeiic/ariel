@@ -268,7 +268,8 @@ I_inv  = Matrix(self.config.get_inertia_inverse(method="svd"))   # full tensor
 
 ARIEL replaced that with the scalar `k_p_signed`/`k_q_signed` coefficients of
 `derive_reference_params` (commit `4ed7e5d`, "Migration started."), mirroring
-`experimentation/reference_drone_sim.py` -- a quadrotor-specific reference whose
+`experimentation/reference_drone_sim.py` (absent from this repository) -- a
+quadrotor-specific reference whose
 own comment concedes it "hardcodes signs for a specific motor layout". The trade
 made there:
 
@@ -365,12 +366,12 @@ every morphology is limited by the same constant.
 
 | piece | where | why |
 |---|---|---|
-| `JointSpec` on `ArmNode`/`MotorNode` | `body_phenotypes/drone/blueprint.py` | mid-flight morphing needs joints in the IR; defaults to `fixed`, so existing blueprints are unchanged |
-| Articulated USD export | `body_phenotypes/drone/backends.py` | flat rigid-body links + `PhysicsRevoluteJoint` with drives. Names match `02_generate_novel_morphology.py`, so the consortium's Isaac scripts (`00`/`01` `--base_body_name base_link`, `03`'s `find_joints`) drive blueprint output unmodified |
-| Backend-agnostic plant interface | `simulation/drone/plant.py` | `DroneState`/`DroneCommand`/`RotorGeometry`/`DronePlant`. `rotor_frames()` is load-bearing: adapters report live geometry each step so `B(q)` is rebuilt rather than cached, which structurally prevents §3.2's class of bug |
-| Maneuverability metrics | `simulation/drone/plant.py` | airevolve's `min(eig(Bm Bmᵀ))` and `rank(Bm)`, plus an inertia-normalised form |
-| `payload_mass` | `simulation/drone/drone_configuration.py` (+simulator, interface) | the mass model never reads `CorePlateNode.mass`, so a blueprint quad weighs 0.093 kg (TWR 8.9) against SPEAR's 0.83–1.25 kg. 0.667 kg of payload gives 0.829 kg at TWR 5.24 |
-| Parameterised slalom | `simulation/tasks/slalom_course.py` | difficulty as one number; see §5 |
+| `JointSpec` on `ArmNode`/`MotorNode` | `src/ariel/body_phenotypes/drone/blueprint.py` | mid-flight morphing needs joints in the IR; defaults to `fixed`, so existing blueprints are unchanged |
+| Articulated USD export | `src/ariel/body_phenotypes/drone/backends.py` | flat rigid-body links + `PhysicsRevoluteJoint` with drives. Names match `examples/spear_vua_upb/spear/02_generate_novel_morphology.py`, so the consortium's Isaac scripts (`examples/spear_vua_upb/spear/00_load_single_usd_apply_wrench.py` and its siblings default `--base_body_name base_link`, `03`'s `find_joints`) drive blueprint output unmodified |
+| Backend-agnostic plant interface | `src/ariel/simulation/drone/plant.py` | `DroneState`/`DroneCommand`/`RotorGeometry`/`DronePlant`. `rotor_frames()` is load-bearing: adapters report live geometry each step so `B(q)` is rebuilt rather than cached, which structurally prevents §3.2's class of bug |
+| Maneuverability metrics | `src/ariel/simulation/drone/plant.py` | airevolve's `min(eig(Bm Bmᵀ))` and `rank(Bm)`, plus an inertia-normalised form |
+| `payload_mass` | `src/ariel/simulation/drone/drone_configuration.py` (+simulator, interface) | the mass model never reads `CorePlateNode.mass`, so a blueprint quad weighs 0.093 kg (TWR 8.9) against SPEAR's 0.83–1.25 kg. 0.667 kg of payload gives 0.829 kg at TWR 5.24 |
+| Parameterised slalom | `src/ariel/simulation/tasks/slalom_course.py` | difficulty as one number; see §5 |
 | Design sweep | `examples/spear/19_morphology_design_sweep.py` | the experiment itself, with `--tracking-check`, `--calibrate` and `--map-only` modes |
 
 ### The maneuverability metric has a caveat worth knowing
@@ -395,7 +396,7 @@ loads one axis in particular. It comes into its own for tilted rotors.
   falls 4.64 → 1.39 m.
 * **Gate yaw is the bisector of adjacent legs.** `GateChecker` counts a pass
   only when the drone crosses the plane with normal `(cos yaw, sin yaw, 0)`; the
-  `SlalomGates` preset in `controllers/utils/gate_configs.py` uses a
+  `SlalomGates` preset in `src/ariel/simulation/drone/controllers/utils/gate_configs.py` uses a
   `[1,0,-1,0]·π/2` pattern that does not follow the path and would mis-detect.
 * **Spacing must exceed gate size.** Shrinking a course to raise difficulty
   makes gate planes overlap and "passing a gate" ambiguous — this is why scaling
@@ -414,7 +415,7 @@ loads one axis in particular. It comes into its own for tilted rotors.
 ### 5.1 The two controller parameters, and why they are not settable
 
 The attitude loop is a second-order system in torque
-(`lee_controller.py`, the comment above the auto-scaling branch):
+(`src/ariel/simulation/drone/controllers/lee_control/lee_controller.py`, the comment above the auto-scaling branch):
 
 ```
 I·theta_ddot + K_angvel·theta_dot + K_rot·theta = 0
@@ -432,7 +433,7 @@ I·theta_ddot + K_angvel·theta_dot + K_rot·theta = 0
   under fixed gains, so despite the highest nominal bandwidth it responds slowly.
 
 **Neither is a parameter.** `omega_n_att = 12.0` is a hard-coded local inside
-the `auto_scale_gains` branch (`lee_controller.py:95`), and `zeta` appears only
+the `auto_scale_gains` branch (`src/ariel/simulation/drone/controllers/lee_control/lee_controller.py:95`), and `zeta` appears only
 as the literal `2.0` in `rate_P_gain = 2.0 * I_diag * omega_n_att` -- that factor
 *is* the choice `zeta = 1`. Substituting `K_rot = I·omega_n^2` and
 `K_angvel = 2·I·omega_n` makes `I` cancel out of `omega_n` and pins `zeta = 1`,
