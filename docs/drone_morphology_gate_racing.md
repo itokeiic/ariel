@@ -64,6 +64,56 @@ differential needs less differential and clips less, which is exactly the
 geometry-sensitive channel — and clipping does vary monotonically with layout
 (1.2% → 3.2% across arm length, tracking `α_roll` 272.8 → 125.2 rad/s²).
 
+### Scoring by each body's own limiting speed (the cleanest test)
+
+Fixed-speed scoring sits on the cliff above, so each body was instead scored by
+**the fastest speed at which it still completes the course**, found by bisection
+(monotone in speed; checked, 0 violations in 21 bodies / 168 rollouts). This is
+continuous by construction: no operating point to calibrate, no ceiling, and at a
+body's own limit the two gate-counting rules agree. Uniform courses, since a
+uniform slalom is one corner repeated and has no layout to overfit; generalisation
+is checked by sweeping turn angle instead.
+
+Max completing speed, 7 arm half-angles x 3 corner sharpnesses:
+
+| half-angle | roll agility (rad/s^2/N) | 60° | 90° | 120° |
+|---|---|---|---|---|
+| 20.44° (H-frame, fore-aft) | 313.3 | **4.688** | **4.062** | **3.812** |
+| 45.00° (X frame) | 159.9 | 4.625 | 3.938 | 3.688 |
+| 69.56° (wide, lateral) | 121.3 | 4.688 | 3.938 | 3.688 |
+
+Max speed falls with corner sharpness as the difficulty parameter intends, but
+the **morphology spread is 0.06-0.125 m/s -- one to two quantisation steps**. A
+2.6x range in roll angular acceleration buys about **3%** more speed, and the
+argmax does not move with corner sharpness: the same body wins at 60°, 90° and
+120°, so there is no evidence here that different corner sharpness wants a
+different airframe.
+
+The diagnostic at each body's own limit is the more useful result, because the
+bodies **fail for different reasons**:
+
+| body | max speed | tracking at limit | lower-bound clipping |
+|---|---|---|---|
+| narrow (20.44°) | 4.062 | 0.706 m | **19.2%** |
+| X (45.00°) | 3.938 | 0.414 m | **0.94%** |
+| wide (69.56°) | 3.938 | 0.437 m | 5.06% |
+
+The narrow frame runs until it saturates -- clipping a fifth of all steps,
+tracking degraded, still completing. The X and wide frames die at under 1-5%
+clipping and *better* tracking: they stop before running out of authority,
+killed by lateral error at corner reversals rather than by actuator limits.
+
+**Why the effect is small.** `auto_scale_gains=True` derives each body's attitude
+gains from its own inertia to hit a fixed 12 rad/s bandwidth, so the controller
+deliberately equalises attitude response across morphologies. With 35-77x torque
+margin on top, a 2.6x authority difference is spent on control *effort* (the
+19% vs 1% clipping spread) rather than on performance. The finding is therefore
+not "geometry does not matter" but the sharper: **a per-body-tuned model-based
+controller designs static geometry out of the closed loop.** Morphology shows up
+only where the controller cannot compensate -- a changed achievable wrench set
+(tilted rotors, needs the normal-aware plant) or the transients of the shape
+change itself.
+
 ### The agility ordering is the opposite of the torque ordering
 
 Roll *torque* authority rises as the quad widens (1.735 → 3.896 N·m from t=24°
@@ -290,11 +340,19 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
    `L ≥ core_radius + 1.1·prop_radius` itself.
 4. **Repair's contract changes for morphing bodies**: collision-free at `q = 0`
    guarantees nothing across a joint envelope.
-5. **The task is a cliff** (§2). A fixed-speed experiment sits on a knife edge.
-   The proposed replacement is to score each body by the *maximum speed at which
-   it completes the course* (bisection, ~5 rollouts per body): continuous by
-   construction, mechanism-aligned, and it removes the calibration problem and
-   the counting-rule choice at once. **Not yet implemented.**
+5. **The task is a cliff** at fixed speed (§2) -- nine operating points from 2.0
+   to 3.8 m/s scored every body identically, and a 5% speed increase collapsed
+   them all. Resolved by the max-speed objective (`--max-speed-sweep`), which is
+   continuous by construction. Keep this in mind before designing any new
+   fixed-speed experiment on this task.
+7. **Is the controller hiding the morphology?** `auto_scale_gains` normalises
+   attitude bandwidth per body, which is the leading explanation for the 3%
+   effect size. `--fixed-gains` runs the same sweep with one controller for all
+   bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
+   across the family (25.9 rad/s at zeta 2.16 for the narrow frame, 9.9 rad/s at
+   zeta 0.82 for the wide one). If the spread jumps, morphology optimisation on
+   this stack is really a **co-design** problem and body and controller cannot be
+   optimised separately.
 6. **Lee tracking above ~4 m/s.** Cruise tracking is excellent once settled
    (0.07 m at 4 m/s), but feedforward is not tuned — enabling it removes the lag
    and introduces speed overshoot and altitude sag, so the loop wants redesigning
