@@ -5,12 +5,17 @@ Reference-form symbolic dynamics. Mirrors
 `optimal_quad_control_RL/quad_race_env.py:22-103` (the sysid'd 5-inch
 canonical model) but parameterized by airevolve's morphology.
 
-Per-step parity against the reference is verified at machine precision
-(<1e-9 rel err) by `unit_tests/test_dynamics_parity.py`.
+Per-step parity against the reference was claimed at machine precision
+(<1e-9 rel err) via `unit_tests/test_dynamics_parity.py`, and the migration
+recorded in `experimentation/RUNTIME_DYNAMICS_MIGRATION.md` /
+`experimentation/RL_TRAINING_FIXES.md`.
 
-See `experimentation/RUNTIME_DYNAMICS_MIGRATION.md` (the migration plan)
-and `experimentation/RL_TRAINING_FIXES.md` (the diagnostic chain that
-justified the rewrite).
+NOTE (2026-08-16): none of the artefacts cited below -- `unit_tests/test_dynamics_parity.py`, `experimentation/*`, and the
+`optimal_quad_control_RL` reference -- exist in this repository, and none
+has ever been in its history. The parity claims are therefore *unverified
+provenance*, not verification: nothing here can reproduce them, and no test
+guards this module's behaviour. Write a characterisation test before
+changing the dynamics.
 """
 
 import warnings
@@ -154,8 +159,9 @@ class DroneSimulator:
         Mirrors `experimentation/reference_drone_sim.py:_build_dynamics_func`
         but generalized to N motors via `self.params` (per-motor signed
         coefficients computed by `derive_reference_params`). Per-step parity
-        against the reference for the canonical 4-motor 2-inch quad is
-        verified by `unit_tests/test_dynamics_parity.py`.
+        against the reference for the canonical 4-motor 2-inch quad was claimed
+        via `unit_tests/test_dynamics_parity.py`, which is not present -- see
+        the module docstring.
 
         The lambdified function has signature
         `(full_state[12+N], action[N]) → full_state_dot[12+N]`. Motor model

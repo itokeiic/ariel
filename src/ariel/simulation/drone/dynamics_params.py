@@ -22,10 +22,17 @@ runtime pulls those signs out of the formula and into the parameter dict.
 * `k_r_signed[i] = spin_i · 2 · k_m · W_hover / Izz` for the linear-W yaw term.
 * `k_r_react_signed[i] = spin_i · k_r_react_borrow` for the dW yaw term.
 
-Where spin_i = +1 for "ccw", -1 for "cw" (the convention is verified via
-the per-step parity test in unit_tests/test_dynamics_parity.py).
+Where spin_i = +1 for "ccw", -1 for "cw" (the convention was said to be
+verified via the per-step parity test in unit_tests/test_dynamics_parity.py).
 
 See `experimentation/RUNTIME_DYNAMICS_MIGRATION.md` Phase 2.1.
+
+NOTE (2026-08-16): none of the artefacts cited below -- `unit_tests/test_dynamics_parity.py`, `experimentation/*`, and the
+`optimal_quad_control_RL` reference -- exist in this repository, and none
+has ever been in its history. The parity claims are therefore *unverified
+provenance*, not verification: nothing here can reproduce them, and no test
+guards this module's behaviour. Write a characterisation test before
+changing the dynamics.
 """
 from __future__ import annotations
 
@@ -109,8 +116,8 @@ def _guard_axial_thrust(propellers: list) -> None:
 
 
 def _spin_sign(rotation: str) -> float:
-    """+1 for ccw, -1 for cw. Consistent with the reference's convention
-    (verified against optimal_quad_control_RL via the V0 parity test)."""
+    """+1 for ccw, -1 for cw. Said to match the reference's convention
+    (optimal_quad_control_RL, V0 parity test -- absent, see module docstring)."""
     if rotation == "ccw":
         return 1.0
     if rotation == "cw":
@@ -216,8 +223,9 @@ def derive_reference_params(
     }
 
 
-# Reference's normalization constants (verified against
-# optimal_quad_control_RL/quad_race_env.py:41-42 via the V0 parity test).
+# Reference's normalization constants (said to match
+# optimal_quad_control_RL/quad_race_env.py:41-42; that reference and its parity
+# test are absent -- see module docstring).
 # These are intentionally independent of physical w_max; the motor state
 # `w_i ∈ [-1, 1]` represents `W_i ∈ [W_MIN_N, W_MAX_N] = [0, 3000]` rad/s.
 # At full throttle, Wc may exceed W_MAX_N; the state can go outside [-1, 1]

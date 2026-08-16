@@ -292,8 +292,19 @@ consistently, and airevolve already inverts the full tensor. Keep ARIEL's motor
 lag, drag and sqrt-poly mapping, and replace the force/moment computation with
 `F_body = Bf.W^2` and `omega_dot = I^-1 (Bm.W^2)`. The reference implementation
 is about twenty lines in
-`airevolve/simulator/simulation/drone_simulator.py:118-150`. The parity test
-will need re-basing, since it pins the behaviour being replaced.
+`airevolve/simulator/simulation/drone_simulator.py:118-150`.
+
+**There is no safety net for this change.** The docstrings cite
+`unit_tests/test_dynamics_parity.py`, `experimentation/reference_drone_sim.py`
+and an `optimal_quad_control_RL` reference as verifying the current dynamics "at
+machine precision (<1e-9 rel err)". *None of them exists in this repository or
+in its history*; those citations are now marked unverifiable in the source. So
+the fix should begin by writing the characterisation test that does not exist:
+record planar-quad trajectories now, require them afterwards. Build in one
+expected difference rather than discovering it -- force, roll and pitch should
+match to machine precision, but **yaw will change by design**, since the reduced
+form linearises yaw at hover (`k_r_signed . W`, plus a `dW` reaction term) while
+`Bm @ U` is quadratic in `W`.
 
 **Scope.** airevolve's own morphology results are unaffected -- its plant flies
 canted rotors correctly. The exposure is ARIEL-only.
