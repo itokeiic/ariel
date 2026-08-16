@@ -192,7 +192,8 @@ class SphericalRepairOperator(RepairOperator):
         repaired_valid_genome = particle_repair_individual(
             genome,
             propeller_radius=self.config.propeller_radius,
-            inner_boundary_radius=self.config.inner_boundary_radius,
+            # Floor raised to clear the core; see RepairConfig.effective_inner_radius.
+            inner_boundary_radius=self.config.effective_inner_radius(),
             outer_boundary_radius=self.config.outer_boundary_radius,
             max_iterations=self.config.max_repair_iterations,
             step_size=self.config.repair_step_size,

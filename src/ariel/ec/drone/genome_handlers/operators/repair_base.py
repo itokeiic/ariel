@@ -30,6 +30,7 @@ class RepairConfig:
         enable_collision_repair: bool = True,
         propeller_radius: float = 0.0254,  # 2-inch propeller radius in meters
         inner_boundary_radius: float = 0.09,
+        core_radius: float = 0.05,
         outer_boundary_radius: float = 0.4,
         max_repair_iterations: int = 50,
         repair_step_size: float = 1.0,
@@ -42,7 +43,13 @@ class RepairConfig:
             apply_symmetry: Whether to apply symmetry after repair
             enable_collision_repair: Whether to enable collision detection and repair
             propeller_radius: Radius of propellers for collision detection (default: 0.0254m = 2-inch props)
-            inner_boundary_radius: Minimum distance from origin
+            inner_boundary_radius: Minimum distance from origin. Raised
+                automatically to clear the core -- see effective_inner_radius.
+            core_radius: Radius of the central body (CorePlateNode.radius,
+                default 0.05 m). Needed because nothing else checks a rotor
+                against the core: are_there_cylinder_collisions only compares
+                arm cylinders with each other, so a short arm can place a
+                propeller disc inside the body and no test objects.
             outer_boundary_radius: Maximum distance from origin
             max_repair_iterations: Maximum iterations for collision repair
             repair_step_size: Step size multiplier for collision resolution
@@ -57,13 +64,32 @@ class RepairConfig:
         self.max_repair_iterations = max_repair_iterations
         self.repair_step_size = repair_step_size
         self.propeller_tolerance = propeller_tolerance
+        self.core_radius = core_radius
+        # NOTE: divergence from airevolve, which has no core-clearance concept.
 
-        assert self.inner_boundary_radius < self.outer_boundary_radius, \
+        assert self.effective_inner_radius() < self.outer_boundary_radius, \
             "Inner boundary radius must be less than outer boundary radius"
         assert self.inner_boundary_radius >= 0, \
             "Inner boundary radius must be non-negative"
         assert self.outer_boundary_radius > 0, \
             "Outer boundary radius must be positive"
+
+    def effective_inner_radius(self) -> float:
+        """Smallest arm length that keeps a propeller disc clear of the core.
+
+        `inner_boundary_radius` alone is not enough: an arm short enough to put the
+        propeller inside the body satisfies every existing test, because
+        `are_there_cylinder_collisions` only compares arm cylinders with each
+        other. A rotor must clear the core by the same tolerance used between
+        rotors, so the floor is
+        `core_radius + (1 + propeller_tolerance) * propeller_radius`.
+
+        For 5" props on a 0.05 m core that is 0.120 m, against the 0.055 m that
+        the drone EA passes today -- i.e. the EA currently permits geometries
+        whose rotors intersect the body.
+        """
+        clearance = self.core_radius + (1.0 + self.propeller_tolerance) * self.propeller_radius
+        return max(self.inner_boundary_radius, clearance)
         assert self.propeller_radius > 0, \
             "Propeller radius must be positive"
     
