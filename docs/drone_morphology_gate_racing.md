@@ -96,9 +96,12 @@ is best read as rounding rather than as structure.
 Max speed falls with corner sharpness as the difficulty parameter intends, but
 the **morphology spread is 0.06-0.125 m/s -- one to two quantisation steps**. A
 2.6x range in roll angular acceleration buys about **3%** more speed, and the
-argmax does not move with corner sharpness: the same body wins at 60°, 90° and
-120°, so there is no evidence here that different corner sharpness wants a
-different airframe.
+argmax does not move with corner sharpness. That last point needs one
+qualification: at 90° and 120° the narrowest body wins outright, but at 60° the
+best score is a **three-way tie** (20.44°, 61.37° and 69.56° all reach
+4.688 m/s), so "wins" there means "ties for first". Either way there is no
+evidence that different corner sharpness wants a different airframe -- under
+auto-scaled gains.
 
 The diagnostic at each body's own limit is the more useful result, because the
 bodies **fail for different reasons**:
@@ -152,8 +155,15 @@ table above, so the two can be read side by side):
 
 Compare column by column with the auto-scaled table. Under auto-scaling the 90°
 and 120° columns are almost constant -- five and six of seven bodies share a
-single value. Under fixed gains every column descends with roll agility, and the
-60° column spans 4.500-4.812 m/s where auto-scaling spanned 4.625-4.688.
+single value. Under fixed gains the 60° and 90° columns descend monotonically
+with roll agility, and the 60° column spans 4.500-4.812 m/s where auto-scaling
+spanned 4.625-4.688.
+
+The 120° column is the exception, and deliberately so: it descends from 28.63°
+downward, but the narrowest body sits *below* its neighbour (3.562 against
+3.625). That single inversion is the argmax flip discussed below -- the point
+where the narrowest frame's overdamping under fixed gains costs more than its
+authority returns.
 
 Two things change beyond the spread:
 
@@ -194,8 +204,8 @@ with turn angle.
 
 ## 3. Defects found in existing code
 
-Six, in code that had been producing published numbers. Each is committed with
-its evidence.
+Seven, in code that had been producing published numbers. Each is committed
+with its evidence.
 
 ### 3.1 Arm-pitch convention mismatch (`a6b16c0`)
 
@@ -413,10 +423,26 @@ uv run examples/spear/19_morphology_design_sweep.py --calibrate \
 # geometry only, no rollouts: feasibility + metrics over (half-angle x length)
 uv run examples/spear/19_morphology_design_sweep.py --map-only
 
-# the sweep itself
+# the sweep itself, at a fixed speed
 uv run examples/spear/19_morphology_design_sweep.py --turn-deg 90 --speed 4.0 \
     --gate-counting flown --feedforward --max-accel 40
+
+# what produced the headline results: score each body by its own limiting speed
+uv run examples/spear/19_morphology_design_sweep.py --max-speed-sweep \
+    --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 \
+    --feedforward --max-accel 40
+
+# the same, with one controller for every body (the co-design evidence)
+uv run examples/spear/19_morphology_design_sweep.py --max-speed-sweep --fixed-gains \
+    --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 \
+    --feedforward --max-accel 40
 ```
+
+`--feedforward` and `--max-accel 40` are needed on every run that flies faster
+than about 2 m/s: the library defaults are a zero velocity setpoint and a
+5 m/s^2 acceleration clamp (§3.7), and without them the drone lags the reference
+by a fixed time and every morphology is limited by the same constant. Both
+sweeps above take 168 rollouts, roughly 25 minutes each.
 
 Use the repo's uv venv (`uv run`). The conda `ariel` env lacks `fcl` and cannot
 run the repair path. `ariel-isaaclab-train` plus Isaac's bundled USD is needed
