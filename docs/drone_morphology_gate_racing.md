@@ -1,6 +1,8 @@
 # Drone morphology optimisation for gate racing — state of the work
 
-Written 2026-08-16, covering commits `a6b16c0..e550ea6` on branch `spear`.
+Written 2026-08-16, covering commits `a6b16c0..649c03b` on branch `spear`.
+Update the range when you add to it; a stale range is how a reader ends up
+trusting a section that a later commit superseded.
 Read this before touching the drone EA, the Lee controller, or the B-spline gate
 trajectory: several defects were found in code that had already produced
 results, and some of those results should not be trusted.
@@ -345,7 +347,7 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
    them all. Resolved by the max-speed objective (`--max-speed-sweep`), which is
    continuous by construction. Keep this in mind before designing any new
    fixed-speed experiment on this task.
-7. **Is the controller hiding the morphology?** `auto_scale_gains` normalises
+6. **Is the controller hiding the morphology?** `auto_scale_gains` normalises
    attitude bandwidth per body, which is the leading explanation for the 3%
    effect size. `--fixed-gains` runs the same sweep with one controller for all
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
@@ -353,7 +355,7 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
    zeta 0.82 for the wide one). If the spread jumps, morphology optimisation on
    this stack is really a **co-design** problem and body and controller cannot be
    optimised separately.
-6. **Lee tracking above ~4 m/s.** Cruise tracking is excellent once settled
+7. **Lee tracking above ~4 m/s.** Cruise tracking is excellent once settled
    (0.07 m at 4 m/s), but feedforward is not tuned — enabling it removes the lag
    and introduces speed overshoot and altitude sag, so the loop wants redesigning
    as `a_des = a_ff + Kp·e_p + Kd·e_v` with gains derived for tracking rather
