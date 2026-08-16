@@ -1,6 +1,6 @@
 # Drone morphology optimisation for gate racing — state of the work
 
-Written 2026-08-16, covering commits `a6b16c0..649c03b` on branch `spear`.
+Written 2026-08-16, covering commits `a6b16c0..2470819` on branch `spear`.
 Update the range when you add to it; a stale range is how a reader ends up
 trusting a section that a later commit superseded.
 Read this before touching the drone EA, the Lee controller, or the B-spline gate
@@ -115,6 +115,42 @@ controller designs static geometry out of the closed loop.** Morphology shows up
 only where the controller cannot compensate -- a changed achievable wrench set
 (tilted rotors, needs the normal-aware plant) or the transients of the shape
 change itself.
+
+### Confirmed: the controller was hiding the morphology (`--fixed-gains`)
+
+Re-running the identical sweep with `auto_scale_gains=False` -- one controller
+for every body, so closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies
+across the family -- supports the explanation above:
+
+| slalom | spread, auto-scaled | spread, fixed gains | ratio | argmax auto -> fixed |
+|---|---|---|---|---|
+| 60° | 0.062 m/s | 0.312 m/s | **5.0x** | 20.44° -> 20.44° |
+| 90° | 0.125 m/s | 0.312 m/s | **2.5x** | 20.44° -> 20.44° |
+| 120° | 0.125 m/s | 0.250 m/s | **2.0x** | 20.44° -> **28.63°** |
+
+Two things change beyond the spread:
+
+* **The ordering becomes physical.** At 90° with auto-scaled gains, five of
+  seven bodies scored an identical 3.938 m/s. With fixed gains the column is
+  monotone in roll agility -- 4.000, 4.000, 3.938, 3.875, 3.812, 3.750, 3.688 --
+  every step down in `alpha_roll` costs speed.
+* **The best body changes with corner sharpness.** The narrowest frame wins at
+  60° and 90°, but at 120° `t=28.63°` beats it (3.625 vs 3.562). Under fixed
+  gains the narrowest body is heavily overdamped (zeta 2.16 against 0.82 for the
+  wide one), so at the sharpest corners, where reversals come fastest, its
+  sluggishness costs more than its authority buys. This is the
+  "different airframe for different task" effect, and it is invisible under
+  per-body-tuned control.
+
+**Morphology optimisation on this stack is therefore a co-design problem.**
+Optimising a body against a controller that re-tunes itself per body measures
+almost nothing, because the controller absorbs the design. Two caveats: the
+effect is larger but still modest (6-8% against 1.5-3%), and fixed gains is not
+the "right" experiment either -- it measures which body suits *those* gains.
+Neither extreme is the answer; the joint problem is.
+
+Monotonicity held on all 21 bodies in both runs (0 violations, 168 rollouts
+each).
 
 ### The agility ordering is the opposite of the torque ordering
 
@@ -347,7 +383,10 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
    them all. Resolved by the max-speed objective (`--max-speed-sweep`), which is
    continuous by construction. Keep this in mind before designing any new
    fixed-speed experiment on this task.
-6. **Is the controller hiding the morphology?** `auto_scale_gains` normalises
+6. **Co-design.** `--fixed-gains` (§2) showed the controller was hiding most of
+   the morphology effect, so body and controller should be optimised jointly.
+   Nothing in the EA does this yet. Superseded question, kept for the record:
+   `auto_scale_gains` normalises
    attitude bandwidth per body, which is the leading explanation for the 3%
    effect size. `--fixed-gains` runs the same sweep with one controller for all
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
