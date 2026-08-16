@@ -121,6 +121,16 @@ parser.add_argument("--sim-margin", type=float, default=1.6,
 parser.add_argument("--tracking-check", action="store_true",
                     help="canonical X quad at several speeds; establishes the "
                          "usable speed range before any morphology work")
+parser.add_argument("--gain-scan", action="store_true",
+                    help="max completing speed of the X quad over a grid of "
+                         "position-loop (omega_n, zeta). The inherited pair "
+                         "(14.3, 9.0) is omega_n=3.78 rad/s at zeta=1.19, "
+                         "carried over from a 93 g drone on near-straight "
+                         "courses and never re-derived for tracking.")
+parser.add_argument("--scan-omega", default="2,3,4,6,8,11")
+parser.add_argument("--scan-zeta", default="0.7,1.0,1.4")
+parser.add_argument("--pos-omega-n", type=float, default=None)
+parser.add_argument("--pos-zeta", type=float, default=None)
 parser.add_argument("--fixed-gains", action="store_true",
                     help="disable auto_scale_gains, so every body flies the "
                          "SAME attitude gains instead of gains derived from its "
@@ -300,8 +310,10 @@ def _build_stack(propellers, course, total_time):
         # (50 m/s^2), so every morphology would be limited by the same constant.
         velocity_feedforward=args.feedforward,
         max_accel=args.max_accel,
-        pos_P_gain=np.array([args.pos_gain] * 3),
-        vel_P_gain=np.array([args.vel_gain] * 3),
+        # (omega_n, zeta) wins when given; otherwise the raw inherited gains.
+        pos_P_gain=(None if args.pos_omega_n else np.array([args.pos_gain] * 3)),
+        vel_P_gain=(None if args.pos_omega_n else np.array([args.vel_gain] * 3)),
+        omega_n_pos=args.pos_omega_n, zeta_pos=args.pos_zeta,
     )
     # The trajectory flies the lead-out; only the detector sees scored gates.
     # Without it the reference clamps on the final gate, and a drone arriving at
@@ -629,6 +641,43 @@ def max_speed_sweep() -> list[dict]:
     return rows
 
 
+def gain_scan() -> list[dict]:
+    """Where does the position loop stop being the limit?
+
+    One body (the X quad), one course, scored by max completing speed over a
+    grid of position-loop (omega_n, zeta). If the inherited gains sit on a
+    plateau, the controller is not what caps speed and item 3 is done; if speed
+    climbs with omega_n, the loop was the limit all along and every morphology
+    number measured so far was measured against a controller bottleneck.
+    """
+    course = slalom_gates(args.turn_deg, leg=args.leg, n_gates=args.n_gates,
+                          gate_size=args.gate_size)
+    genome = make_genome(np.pi / 4)
+    omegas = [float(v) for v in args.scan_omega.split(",")]
+    zetas = [float(v) for v in args.scan_zeta.split(",")]
+    console.rule(f"position-gain scan — X quad, {args.turn_deg:.0f}° slalom "
+                 f"(inherited: omega_n=3.78, zeta=1.19)")
+    rows = []
+    for z in zetas:
+        for w in omegas:
+            args.pos_omega_n, args.pos_zeta = w, z
+            t0 = time.time()
+            r = max_completing_speed(genome, course)
+            rows.append({"omega_n": w, "zeta": z, "max_speed": r["max_speed"],
+                         "tracking_err": r["tracking_err"],
+                         "saturation_lo": r["saturation_lo"],
+                         "n_rollouts": r["n_rollouts"], "monotone": int(r["monotone"])})
+            console.log(f"  wn={w:>5.1f}  zeta={z:>4.2f}  max speed {r['max_speed']:5.3f} m/s  "
+                        f"trk={r['tracking_err']:5.3f}  clip={100*r['saturation_lo']:4.1f}%  "
+                        f"({time.time()-t0:.0f}s)")
+    args.pos_omega_n = args.pos_zeta = None
+    _write_csv(rows, DATA / f"gain_scan_{RUN_ID}.csv")
+    best = max(rows, key=lambda r: r["max_speed"])
+    console.log(f"[bold green]best[/bold green]: omega_n={best['omega_n']}, "
+                f"zeta={best['zeta']} -> {best['max_speed']:.3f} m/s")
+    return rows
+
+
 def calibrate() -> list[dict]:
     """Find where the task separates morphologies.
 
@@ -765,7 +814,9 @@ def _write_csv(rows: list[dict], path: Path) -> None:
 
 
 if __name__ == "__main__":
-    if args.max_speed_sweep:
+    if args.gain_scan:
+        gain_scan()
+    elif args.max_speed_sweep:
         max_speed_sweep()
     elif args.calibrate:
         calibrate()

@@ -43,6 +43,8 @@ class LeeGeometricControl:
                  att_P_gain=None,                           # Attitude gains [kR_roll, kR_pitch, kR_yaw]
                  rate_P_gain=None,                          # Angular rate gains
                  auto_scale_gains=False,                    # Scale att/rate gains by inertia
+                 omega_n_pos=None,                          # Position-loop bandwidth (rad/s)
+                 zeta_pos=None,                             # Position-loop damping ratio
                  velocity_feedforward=False,                # Track the trajectory's velocity
                  max_accel=5.0,                             # Commanded-acceleration clamp, m/s^2
                  # Interface compatibility (unused parameters for compatibility with PID controllers)
@@ -79,6 +81,23 @@ class LeeGeometricControl:
         self.orient = orient
         self.velocity_feedforward = bool(velocity_feedforward)
         self.max_accel = float(max_accel)
+
+        # Position loop in second-order form, mirroring the attitude loop:
+        #   e_p_ddot + K_vel * e_p_dot + K_pos * e_p = 0
+        #     =>  K_pos = omega_n^2,  K_vel = 2 * zeta * omega_n
+        # Unlike the attitude gains these need no inertia scaling, because
+        # compute_acceleration produces an acceleration and mass is applied
+        # afterwards (acceleration_control.py). Exposing omega_n and zeta gives
+        # two interpretable, morphology-independent numbers in place of two raw
+        # gains: the example-17 pair (14.3, 9.0) is omega_n = 3.78 rad/s at
+        # zeta = 1.19.
+        if omega_n_pos is not None:
+            zeta = 1.0 if zeta_pos is None else float(zeta_pos)
+            wn = float(omega_n_pos)
+            if pos_P_gain is None:
+                pos_P_gain = np.array([wn ** 2] * 3)
+            if vel_P_gain is None:
+                vel_P_gain = np.array([2.0 * zeta * wn] * 3)
 
         # Built-in defaults (calibrated for ~1 kg drone with heavy inertia).
         if pos_P_gain is None:
