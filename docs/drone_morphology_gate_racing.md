@@ -750,16 +750,55 @@ $$I\ddot{\theta} + K_\text{angvel}\dot{\theta} + K_\text{rot}\theta = 0
 \zeta=\frac{K_\text{angvel}}{2\sqrt{K_\text{rot}I}}$$
 
 Here the inertia plays the part of the mass, and that is the key to a result in
-§2. `auto_scale_gains` chooses
+§2. `auto_scale_gains` does not pick gains directly; it picks a *response* and
+solves for the gains that produce it, choosing
 
-$$K_\text{rot} = I\,\omega_n^2, \qquad K_\text{angvel} = 2I\,\omega_n$$
+$$K_\text{rot} = I\,\omega_n^2, \qquad K_\text{angvel} = 2\zeta I\,\omega_n$$
 
-Substituting back, $I$ **cancels**: every morphology gets $\omega_n$ = 12 rad/s
-and $\zeta$ = 1 regardless of its inertia. That is exactly why per-body-tuned
-control hides morphology -- the controller is built to erase the difference.
-Turn it off (`--fixed-gains`) and the same gains give each body a different
-response: 25.9 rad/s at $\zeta$ = 2.16 for the narrow frame, 9.9 rad/s at
-$\zeta$ = 0.82 for the wide one.
+(the code fixes $\zeta=1$, writing the second as $2I\omega_n$). Substituting
+both into the closed-loop equation:
+
+$$I\ddot{\theta} + \underbrace{2\zeta I\omega_n}_{K_\text{angvel}}\dot{\theta}
++ \underbrace{I\omega_n^2}_{K_\text{rot}}\theta = 0$$
+
+Every term now carries a factor of $I$, so dividing through by $I$ (which is
+strictly positive) removes it entirely:
+
+$$\frac{I}{I}\ddot{\theta} + \frac{2\zeta I\omega_n}{I}\dot{\theta}
++ \frac{I\omega_n^2}{I}\theta = 0
+\qquad\Longrightarrow\qquad
+\ddot{\theta} + 2\zeta\omega_n\dot{\theta} + \omega_n^2\theta = 0$$
+
+The inertia has vanished from the equation of motion. Whatever $I$ a body has,
+its attitude error decays with the same $\omega_n$ and the same $\zeta$ --
+identical settling time, identical overshoot. Physically: the gains are scaled
+so that a heavier-to-rotate body is commanded proportionally more torque for the
+same error, and the two effects cancel exactly.
+
+That is why per-body-tuned control hides morphology. The controller is built to
+erase the very difference the experiment is trying to measure.
+
+**Contrast: fixed gains.** With $K_\text{rot}$ and $K_\text{angvel}$ held
+constant across bodies, dividing by $I$ leaves it behind in both coefficients:
+
+$$\ddot{\theta} + \frac{K_\text{angvel}}{I}\dot{\theta} + \frac{K_\text{rot}}{I}\theta = 0
+\qquad\Longrightarrow\qquad
+\omega_n = \sqrt{\frac{K_\text{rot}}{I}}, \quad
+\zeta = \frac{K_\text{angvel}}{2\sqrt{K_\text{rot}I}}$$
+
+Now both depend on the airframe, and a 7x spread in roll inertia across the
+swept family becomes a real spread in response. With the library defaults
+$K_\text{rot}=0.3$, $K_\text{angvel}=0.05$:
+
+| half-angle | $I_{xx}$ | auto-scaled $\omega_n$ / $\zeta$ | fixed-gain $\omega_n$ / $\zeta$ |
+|---|---|---|---|
+| 20.44° (narrow) | 4.459e-04 | 12.0 / 1.00 | 25.9 / 2.16 (overdamped) |
+| 45.00° (X) | 1.768e-03 | 12.0 / 1.00 | 13.0 / 1.09 |
+| 69.56° (wide) | 3.091e-03 | 12.0 / 1.00 | 9.9 / 0.82 (underdamped) |
+
+Note the fixed-gain column is not simply "the narrow frame is better": it gets a
+higher bandwidth *and* becomes overdamped, so its response is stiffer but
+sluggish. That competition is what produces the argmax flip at 120° in §2.
 
 ### 7.3 The position loop: $m$ cancels entirely
 
