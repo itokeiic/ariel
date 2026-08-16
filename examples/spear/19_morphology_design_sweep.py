@@ -121,6 +121,14 @@ parser.add_argument("--sim-margin", type=float, default=1.6,
 parser.add_argument("--tracking-check", action="store_true",
                     help="canonical X quad at several speeds; establishes the "
                          "usable speed range before any morphology work")
+parser.add_argument("--fixed-gains", action="store_true",
+                    help="disable auto_scale_gains, so every body flies the "
+                         "SAME attitude gains instead of gains derived from its "
+                         "own inertia. Auto-scaling targets a fixed 12 rad/s "
+                         "bandwidth for every morphology, which normalises away "
+                         "the thing being measured; with fixed gains the "
+                         "closed-loop bandwidth becomes sqrt(K_rot/I) and "
+                         "varies with the airframe.")
 parser.add_argument("--max-speed-sweep", action="store_true",
                     help="score each morphology by the fastest speed at which "
                          "it still completes the course, found by bisection, "
@@ -284,7 +292,7 @@ def _build_stack(propellers, course, total_time):
     drone = DroneInterface(0, propellers=propellers, payload_mass=PAYLOAD_MASS)
     wind = Wind("None")
     ctrl = LeeGeometricControl(
-        drone, yawType=1, orient="NED", auto_scale_gains=True,
+        drone, yawType=1, orient="NED", auto_scale_gains=not args.fixed_gains,
         # Both off by default in the library, and both must be on to fly an
         # aggressive trajectory: without feedforward the controller lags a
         # moving reference by ~0.25 s, and the 5 m/s^2 default clamp sits far
