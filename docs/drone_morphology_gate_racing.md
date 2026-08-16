@@ -303,6 +303,46 @@ loads one axis in particular. It comes into its own for tilted rotors.
   uniform one (a run is governed by its *hardest* corner, and jitter raises the
   max while leaving the mean).
 
+### 5.1 The two controller parameters, and why they are not settable
+
+The attitude loop is a second-order system in torque
+(`lee_controller.py`, the comment above the auto-scaling branch):
+
+```
+I·theta_ddot + K_angvel·theta_dot + K_rot·theta = 0
+    =>  omega_n = sqrt(K_rot / I),   zeta = K_angvel / (2·sqrt(K_rot·I))
+```
+
+* **`omega_n`** is the attitude bandwidth: how fast the vehicle nulls an
+  attitude error, settling in roughly `1/omega_n`. It matters here because at
+  4 m/s on a 2.4 m leg the drone has ~0.6 s per corner and must reverse its bank
+  each time, so attitude response has to be several times faster than the corner
+  rate or it arrives late and misses laterally.
+* **`zeta`** is the damping ratio: below 1 it overshoots and rings, at 1 it is
+  the fastest approach without overshoot, above 1 it is sluggish. This is the
+  term behind the 120° argmax flip -- the narrowest frame lands at zeta 2.16
+  under fixed gains, so despite the highest nominal bandwidth it responds slowly.
+
+**Neither is a parameter.** `omega_n_att = 12.0` is a hard-coded local inside
+the `auto_scale_gains` branch (`lee_controller.py:95`), and `zeta` appears only
+as the literal `2.0` in `rate_P_gain = 2.0 * I_diag * omega_n_att` -- that factor
+*is* the choice `zeta = 1`. Substituting `K_rot = I·omega_n^2` and
+`K_angvel = 2·I·omega_n` makes `I` cancel out of `omega_n` and pins `zeta = 1`,
+which is exactly how auto-scaling makes every morphology respond identically.
+
+With `auto_scale_gains=False` the gains fall back to fixed defaults
+(`att = [0.3, 0.3, 0.1]`, `rate = [0.05, 0.05, 0.03]`) and the two quantities
+become *emergent* from each body's inertia -- 25.9 rad/s at zeta 2.16 for the
+narrow frame against 9.9 rad/s at zeta 0.82 for the wide one.
+
+**For co-design, expose them.** Accept `omega_n_att` and `zeta` as constructor
+arguments (defaulting to 12.0 and 1.0 so nothing existing moves) and compute
+`att = I·omega_n^2`, `rate = 2·zeta·I·omega_n`. That gives an EA two physically
+meaningful, inertia-normalised genes that mean the same thing across
+morphologies. Searching the six raw gain numbers instead would not: a gain
+value does not mean the same thing on a body with 7x the roll inertia, which is
+the whole reason auto-scaling exists.
+
 ### Objective function
 
 `--objective normalized` (default): gates scored out of 100, plus a quality
@@ -385,15 +425,15 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
    fixed-speed experiment on this task.
 6. **Co-design.** `--fixed-gains` (§2) showed the controller was hiding most of
    the morphology effect, so body and controller should be optimised jointly.
-   Nothing in the EA does this yet. Superseded question, kept for the record:
-   `auto_scale_gains` normalises
+   Nothing in the EA does this yet. See §5.1 for the two parameters to put in
+   the genome and why they are not settable today.
+
+   *Superseded question, kept for the record:* `auto_scale_gains` normalises
    attitude bandwidth per body, which is the leading explanation for the 3%
    effect size. `--fixed-gains` runs the same sweep with one controller for all
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
-   across the family (25.9 rad/s at zeta 2.16 for the narrow frame, 9.9 rad/s at
-   zeta 0.82 for the wide one). If the spread jumps, morphology optimisation on
-   this stack is really a **co-design** problem and body and controller cannot be
-   optimised separately.
+   across the family. If the spread jumps, morphology optimisation on this stack
+   is really a co-design problem. *(Answered 2026-08-16: it does -- 2-5x.)*
 7. **Lee tracking above ~4 m/s.** Cruise tracking is excellent once settled
    (0.07 m at 4 m/s), but feedforward is not tuned — enabling it removes the lag
    and introduces speed overshoot and altitude sag, so the loop wants redesigning
