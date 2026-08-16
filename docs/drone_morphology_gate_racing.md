@@ -888,6 +888,38 @@ operating points scored every body identically (§2).
 
 ---
 
+### 7.9 Provenance: which command produced which number
+
+Every headline table above is reproducible from the CSV beside it. The raw runs
+land in `__data__/`, which is gitignored, so the files behind the results in this
+document are copied into `docs/data/` (52 KB total) and are tracked. All runs use
+the SPEAR-matched quad (`PAYLOAD_MASS = 0.667`, 5" props, `N_ARMS = 4`) and the
+uniform slalom unless a course set is named.
+
+| result | data file | command |
+|---|---|---|
+| §2 corner sharpness, 90° | `docs/data/tuned_90deg.csv` | `--max-speed-sweep --sweep-turns 90 --points 7 --speed-tol 0.0625 --speed-lo 3 --speed-hi 10 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40` |
+| §2 corner sharpness, 60° | `docs/data/tuned_60deg.csv` | as above but `--sweep-turns 60 --speed-lo 8 --speed-hi 14 --speed-cap 25` |
+| §2 corner sharpness, 120° | `docs/data/tuned_60_120deg.csv` | as above but `--sweep-turns 60,120 --speed-lo 3 --speed-hi 12` (the 60° column of this file is **censored at the 12 m/s cap**; use `tuned_60deg.csv`) |
+| §2 pre-tuning sweep (superseded) | `docs/data/pretuning_60_90_120deg.csv` | `--max-speed-sweep --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 --feedforward --max-accel 40` |
+| §2 `--fixed-gains` comparison | `docs/data/pretuning_fixed_gains.csv` | as above plus `--fixed-gains` |
+| §5.2 position-gain scan | `docs/data/gain_scan_att12.csv`, `gain_scan_att12_low.csv` | `--gain-scan --scan-omega 2,3.78,5,7,9,12 --scan-zeta 0.7,1.19,1.6` and `--scan-omega 0.8,1.2,1.6,2.0,2.6,3.2 --scan-zeta 1.0,1.19,1.4` |
+| §5.2 attitude-bandwidth scan | `docs/data/gain_scan_att{6,24,36}.csv` | `--gain-scan --att-omega-n {6,24,36} --scan-zeta 1.0` with `--scan-omega` bracketing a 6-12x ratio |
+| §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
+
+Two conventions worth knowing when reading the CSVs:
+
+* **`bracket`** records how a max-speed number was obtained: `ok` means bisection
+  converged inside the bracket, `above_cap` means the body hit `--speed-cap` and
+  the value is a **lower bound**, `below_lo` means it could not fly the slowest
+  bracket speed. A four-way tie at exactly the cap is censoring, not a finding --
+  this happened once and is the reason the 60° column was re-run.
+* **`monotone`** records whether the bisection's assumption held: every tested
+  speed above the limit failed and every one below passed. 0 violations across
+  every run reported here.
+
+---
+
 ## 8. Open items
 
 1. **Normal-aware plant (§3.2) -- the priority.** Guarded, not fixed. Blocks any experiment on
