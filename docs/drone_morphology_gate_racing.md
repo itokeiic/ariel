@@ -145,6 +145,42 @@ only where the controller cannot compensate -- a changed achievable wrench set
 (tilted rotors, needs the normal-aware plant) or the transients of the shape
 change itself.
 
+### SUPERSEDED (2026-08-16): the numbers below were measured against a controller bottleneck
+
+Everything in this section up to here, and the `--fixed-gains` comparison that
+follows, was measured with the attitude loop at 12 rad/s and the position loop
+at the inherited `omega_n = 3.78`. At that tuning motor clipping is 0.1-2%, i.e.
+the **controller** is the binding constraint and the airframe is not being asked
+for anything its geometry could differentiate. The findings are kept because the
+comparison between the two regimes is itself the result, but the effect sizes
+must not be quoted as properties of the airframes.
+
+Retuning the cascade (see §5.2) doubles every body's speed and moves the
+constraint to the airframe -- clipping 15-21% for all seven bodies. At that
+operating point, on the 90 deg slalom:
+
+| half-angle | roll agility | at 12 rad/s | clip | **at 24 rad/s** | clip |
+|---|---|---|---|---|---|
+| 20.44° | 313.3 | 4.062 | 19.2% | 8.414 | 20.5% |
+| 28.63° | 233.1 | 4.000 | 11.5% | 8.523 | 21.2% |
+| **36.81°** | 187.9 | 3.938 | 0.9% | **8.578** | 20.3% |
+| 45.00° | 159.9 | 3.938 | 0.9% | 8.469 | 19.1% |
+| 53.19° | 141.6 | 3.938 | 1.2% | 8.359 | 18.2% |
+| 61.37° | 129.3 | 3.938 | 1.8% | 8.305 | 17.3% |
+| 69.56° | 121.3 | 3.938 | 5.1% | 8.086 | 15.4% |
+
+Two corrections to the superseded story:
+
+* **Spread**: 0.125 -> 0.492 m/s, 3.2% -> 5.9% of the mean. At 0.0625 m/s
+  resolution that is ~8 quantisation steps, so the shape is resolved rather
+  than noise.
+* **The optimum moves and becomes interior**: 20.44° -> **36.81°**, with a
+  smooth single peak. "Narrower is monotonically better" was an artefact of
+  measuring where geometry could not bind. The peak sits biased toward roll but
+  not maximally (alpha_roll 187.9 against alpha_pitch 140.9), which is what a
+  task that weaves laterally while accelerating longitudinally should want, and
+  it is a far better landscape for an EA: smooth, single-peaked, interior.
+
 ### Confirmed: the controller was hiding the morphology (`--fixed-gains`)
 
 Re-running the identical sweep with `auto_scale_gains=False` -- one controller
@@ -451,6 +487,40 @@ meaningful, inertia-normalised genes that mean the same thing across
 morphologies. Searching the six raw gain numbers instead would not: a gain
 value does not mean the same thing on a body with 7x the roll inertia, which is
 the whole reason auto-scaling exists.
+
+### 5.2 Cascade tuning: the position loop must sit below the attitude loop
+
+The inherited position gains (14.3, 9.0) are `omega_n = 3.78 rad/s` at
+`zeta = 1.19`, carried from a 93 g drone on near-straight courses. Scanning max
+completing speed over both bandwidths on the X quad, 90 deg slalom, 0/54
+non-monotone bisections:
+
+| attitude omega_n | best speed | at position omega_n | ratio | clipping |
+|---|---|---|---|---|
+| 6 | 2.375 m/s | 1.30 | 4.6x | 0.0% |
+| 12 | 5.125 m/s | 1.60 | 7.5x | 2.0% |
+| **24** | **8.438 m/s** | 2.00 | 12x | **19.2%** |
+| 36 | 7.500 m/s | 4.00 | 9x | 24.6% |
+
+Three things this fixes and one it reveals:
+
+* **The position loop was roughly twice as stiff as it should be.** At a fixed
+  12 rad/s attitude loop, retuning alone gives +32% (3.875 -> 5.125 m/s). The
+  optimum is a 6-10x separation from the inner loop; at or above it (`ratio <=
+  1.3x`) the two loops fight and the vehicle is **unflyable at any speed**, and
+  far below it (15x) the loop is too soft to correct.
+* **The ceiling scales with the cascade** until the airframe binds: doubling
+  attitude bandwidth roughly doubles achievable speed, 2.375 -> 5.125 -> 8.438.
+* **The crossover is at ~24 rad/s**, where clipping reaches 19%. Beyond it
+  (36 rad/s) the loop demands more than the motors deliver and speed *falls*.
+* **Morphology enters here.** Every body is commanded the same `omega_n_att`;
+  whether it can deliver depends on its inertia and torque authority. That is a
+  mechanism connecting `alpha_roll` / `I^-1 Bm` to a performance number rather
+  than a correlation -- and it is why measurements below the crossover cannot
+  see geometry.
+
+Use `--att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0` for any morphology
+experiment on this task.
 
 ### Objective function
 
