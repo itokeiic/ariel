@@ -81,8 +81,17 @@ Max completing speed, 7 arm half-angles x 3 corner sharpnesses:
 | half-angle | roll agility (rad/s^2/N) | 60° | 90° | 120° |
 |---|---|---|---|---|
 | 20.44° (H-frame, fore-aft) | 313.3 | **4.688** | **4.062** | **3.812** |
+| 28.63° | 233.1 | 4.625 | 4.000 | 3.688 |
+| 36.81° | 187.9 | 4.625 | 3.938 | 3.688 |
 | 45.00° (X frame) | 159.9 | 4.625 | 3.938 | 3.688 |
-| 69.56° (wide, lateral) | 121.3 | 4.688 | 3.938 | 3.688 |
+| 53.19° | 141.6 | 4.625 | 3.938 | 3.688 |
+| 61.37° | 129.3 | **4.688** | 3.938 | 3.688 |
+| 69.56° (wide, lateral) | 121.3 | **4.688** | 3.938 | 3.688 |
+
+Note the 60° column: the best score is shared by the narrowest *and* the two
+widest bodies, with the middle of the family one step below. That is
+non-monotone in every geometric quantity, at exactly one quantisation step, and
+is best read as rounding rather than as structure.
 
 Max speed falls with corner sharpness as the difficulty parameter intends, but
 the **morphology spread is 0.06-0.125 m/s -- one to two quantisation steps**. A
@@ -127,6 +136,24 @@ across the family -- supports the explanation above:
 | 60° | 0.062 m/s | 0.312 m/s | **5.0x** | 20.44° -> 20.44° |
 | 90° | 0.125 m/s | 0.312 m/s | **2.5x** | 20.44° -> 20.44° |
 | 120° | 0.125 m/s | 0.250 m/s | **2.0x** | 20.44° -> **28.63°** |
+
+Max completing speed with one controller for every body (same layout as the
+table above, so the two can be read side by side):
+
+| half-angle | roll agility (rad/s^2/N) | 60° | 90° | 120° |
+|---|---|---|---|---|
+| 20.44° (H-frame, fore-aft) | 313.3 | **4.812** | **4.000** | 3.562 |
+| 28.63° | 233.1 | 4.750 | **4.000** | **3.625** |
+| 36.81° | 187.9 | 4.750 | 3.938 | 3.562 |
+| 45.00° (X frame) | 159.9 | 4.688 | 3.875 | 3.562 |
+| 53.19° | 141.6 | 4.625 | 3.812 | 3.500 |
+| 61.37° | 129.3 | 4.562 | 3.750 | 3.438 |
+| 69.56° (wide, lateral) | 121.3 | 4.500 | 3.688 | 3.375 |
+
+Compare column by column with the auto-scaled table. Under auto-scaling the 90°
+and 120° columns are almost constant -- five and six of seven bodies share a
+single value. Under fixed gains every column descends with roll agility, and the
+60° column spans 4.500-4.812 m/s where auto-scaling spanned 4.625-4.688.
 
 Two things change beyond the spread:
 
