@@ -21,7 +21,7 @@ results, and some of those results should not be trusted.
 > Consequences: every result here is confined to arm azimuth and arm length,
 > the two axes the plant models correctly. **Arm elevation, motor cant, tilted
 > rotors and any fully-actuated design are not simulable today** -- which is
-> most of the interesting morphing directions, and the reason §7 item 1 is the
+> most of the interesting morphing directions, and the reason §8 item 1 is the
 > highest-value open item rather than a footnote.
 
 ---
@@ -180,6 +180,43 @@ Two corrections to the superseded story:
   not maximally (alpha_roll 187.9 against alpha_pitch 140.9), which is what a
   task that weaves laterally while accelerating longitudinally should want, and
   it is a far better landscape for an EA: smooth, single-peaked, interior.
+
+### The result the chain was aimed at: corner sharpness selects different airframes
+
+With the cascade tuned (§5.2) and every body clipping 15-21%, i.e. airframe-
+limited rather than controller-limited, max completing speed across three corner
+sharpnesses:
+
+| half-angle | alpha_roll | 60° | 90° | 120° |
+|---|---|---|---|---|
+| 20.44° | 313.3 | 10.859 | 8.414 | 6.973 |
+| 28.63° | 233.1 | 11.516 | 8.523 | **7.078** |
+| 36.81° | 187.9 | **12.172** | **8.578** | **7.078** |
+| 45.00° | 159.9 | 12.125 | 8.469 | 6.973 |
+| 53.19° | 141.6 | **12.172** | 8.359 | 6.867 |
+| 61.37° | 129.3 | **12.172** | 8.305 | 6.691 |
+| 69.56° | 121.3 | 12.078 | 8.086 | 6.516 |
+
+**The extremes swap ends.** The narrowest frame (highest roll agility) is *last*
+at 60° -- 1.3 m/s and 11% behind -- and mid-pack at 120°. The widest frame is
+competitive at 60° and *last* at 120°. The peak migrates with sharpness: a
+plateau across 36.8-61.4° at 60°, 36.81° at 90°, and 28.63° at 120°.
+
+The mechanism is the one §7.5 predicts. Sharper corners demand faster bank
+reversals, which rewards roll angular acceleration; gentle corners flown at
+12 m/s do not, and there the narrow frame's weak pitch authority (`alpha_pitch`
+120.8 against 313.3 in roll) costs it.
+
+**So no single static geometry is best across the difficulty range** -- which is
+the first experimental support in this work for making the geometry adjustable
+in flight. Measured before the cascade was tuned, the same sweep said the same
+body won everywhere; that answer was an artefact of the controller-limited
+regime.
+
+Two limits on this: the 60° plateau is at resolution (its top four differ by
+less than the 0.0625 m/s bisection tolerance), and the 120° peak is a tie
+between 28.63° and 36.81°. The *direction* of the shift is consistent across all
+three columns; the exact argmax at 60° and 120° is not resolved.
 
 ### Confirmed: the controller was hiding the morphology (`--fixed-gains`)
 
@@ -640,7 +677,7 @@ flag nobody can safely change.
 
 | flag | default | why it exists |
 |---|---|---|
-| `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§7 item 7). |
+| `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§8 item 7). |
 | `--max-accel` | 5.0 | Commanded-acceleration clamp. The library default is below what an aggressive course demands (21 m/s^2) and far below what the airframe delivers (50), so while it binds **every morphology is limited by the same constant** and no sweep can see geometry. Use 40. |
 | `--fixed-gains` | off | Disables `auto_scale_gains`, so one controller flies every body. This is the co-design evidence: it widens the morphology spread 2-5x and makes the ordering monotone in roll agility (§2). |
 | `--pos-gain` / `--vel-gain` | 14.3 / 9.0 | Position and velocity gains, inherited from example 17. Exposed during the tracking investigation; 7x the position gain moved tracking by 10%, which is how gain tuning was ruled out as the cause of the lag. |
@@ -656,7 +693,202 @@ flag nobody can safely change.
 
 ---
 
-## 7. Open items
+## 7. Variables and metrics: what they mean and where they come from
+
+Written for a reader comfortable with differential equations but not
+necessarily with control or vibration theory. Everything below is either
+measured by `examples/spear/19_morphology_design_sweep.py` or read off the geometry.
+
+### 7.1 The second-order system, in one page
+
+Every quantity called a *bandwidth* or a *damping ratio* here comes from one
+equation. Take a mass on a spring with a dashpot:
+
+$$m\ddot{x} + c\dot{x} + kx = 0$$
+
+Divide by $m$ and rename the two coefficients:
+
+$$\ddot{x} + 2\zeta\omega_n\dot{x} + \omega_n^2 x = 0,
+\qquad \omega_n=\sqrt{k/m}, \qquad \zeta=\frac{c}{2\sqrt{km}}$$
+
+$\omega_n$ (rad/s) is the **natural frequency**, and $\zeta$ (dimensionless) the
+**damping ratio**. Substituting $x=e^{st}$ gives the characteristic roots
+
+$$s = -\zeta\omega_n \pm \omega_n\sqrt{\zeta^2-1}$$
+
+which is the whole story:
+
+| $\zeta$ | roots | behaviour |
+|---|---|---|
+| $<1$ | complex pair | **underdamped** -- overshoots and rings, overshoot $\approx e^{-\pi\zeta/\sqrt{1-\zeta^2}}$ |
+| $=1$ | real, repeated | **critically damped** -- fastest approach with no overshoot |
+| $>1$ | real, distinct | **overdamped** -- no overshoot, but sluggish |
+
+Both roots have real part $-\zeta\omega_n$, so disturbances decay like
+$e^{-\zeta\omega_n t}$: **settling time $\approx 4/(\zeta\omega_n)$**. And
+driving the system with a sinusoid, it follows inputs slower than $\omega_n$ and
+attenuates and lags faster ones -- which is why $\omega_n$ is loosely called the
+loop's *bandwidth*.
+
+Why this governs a drone: a feedback controller that drives an error to zero
+*is* such a system, by construction. Choosing gains is choosing $\omega_n$ and
+$\zeta$; the only question is which physical quantity plays the role of $m$.
+
+### 7.2 The attitude loop: $m$ is the inertia
+
+For one axis, small angles, and a diagonal inertia tensor, rigid-body rotation
+is $I\ddot{\theta} = \tau$. Lee's controller commands a torque from the attitude
+and rate errors,
+
+$$\tau = -K_\text{rot}\,\theta_\text{err} - K_\text{angvel}\,\dot{\theta}_\text{err}$$
+
+so the error obeys
+
+$$I\ddot{\theta} + K_\text{angvel}\dot{\theta} + K_\text{rot}\theta = 0
+\qquad\Longrightarrow\qquad
+\omega_n=\sqrt{K_\text{rot}/I},\quad
+\zeta=\frac{K_\text{angvel}}{2\sqrt{K_\text{rot}I}}$$
+
+Here the inertia plays the part of the mass, and that is the key to a result in
+§2. `auto_scale_gains` chooses
+
+$$K_\text{rot} = I\,\omega_n^2, \qquad K_\text{angvel} = 2I\,\omega_n$$
+
+Substituting back, $I$ **cancels**: every morphology gets $\omega_n$ = 12 rad/s
+and $\zeta$ = 1 regardless of its inertia. That is exactly why per-body-tuned
+control hides morphology -- the controller is built to erase the difference.
+Turn it off (`--fixed-gains`) and the same gains give each body a different
+response: 25.9 rad/s at $\zeta$ = 2.16 for the narrow frame, 9.9 rad/s at
+$\zeta$ = 0.82 for the wide one.
+
+### 7.3 The position loop: $m$ cancels entirely
+
+The outer loop commands an *acceleration*,
+
+$$a_\text{des} = a_\text{ff} + K_\text{pos}e_p + K_\text{vel}\dot{e}_p$$
+
+and mass enters only afterwards, when force is computed as $F = m(a-g)$
+(`src/ariel/simulation/drone/controllers/lee_control/acceleration_control.py`). The position error therefore obeys
+
+$$\ddot{e}_p + K_\text{vel}\dot{e}_p + K_\text{pos}e_p = 0
+\qquad\Longrightarrow\qquad
+\omega_n = \sqrt{K_\text{pos}}, \quad \zeta = \frac{K_\text{vel}}{2\sqrt{K_\text{pos}}}$$
+
+No inertia or mass appears, which is why these two numbers transfer across
+morphologies unchanged and the raw gains do not. The inherited pair
+$(K_\text{pos},K_\text{vel}) = (14.3, 9.0)$ is $\omega_n$ = 3.78 rad/s at
+$\zeta$ = 1.19.
+
+$a_\text{ff}$ is the trajectory's own acceleration. Without it the feedback
+terms must *generate* the cornering acceleration from an error that has already
+happened, which is a lag; with it they only trim the residual.
+
+### 7.4 Why the two loops must be separated
+
+The position loop's actuator *is* the attitude loop: to accelerate sideways the
+vehicle must first tilt. Writing $a_\text{des}$ as though the tilt appears
+instantly is only valid when the attitude loop settles much faster than the
+position loop moves -- i.e. $\omega_n^\text{att} \gg \omega_n^\text{pos}$. When
+they are comparable, the outer loop reacts to an error the inner loop has not
+yet had time to correct, and commands more of the same: the loops fight.
+
+Measured on the X quad (§5.2): best at a **6-12x separation**, unflyable at any
+speed when the ratio drops to 1.3x, and too soft to correct at 15x. This is the
+single largest performance factor found in this work -- retuning alone doubled
+achievable speed twice over.
+
+### 7.5 From rotor thrusts to accelerations: the allocation matrix
+
+Each rotor $i$ has a position $r_i$ and a unit thrust axis $n_i$ in the body
+frame, and produces thrust $f_i \ge 0$ along $n_i$ plus a reaction torque about
+its own axis. Stacking:
+
+$$\begin{bmatrix}F\\M\end{bmatrix} = B f, \qquad
+B_{F,i} = n_i, \qquad
+B_{M,i} = r_i \times n_i - \text{spin}_i\,\frac{k_m}{k_f}\,n_i$$
+
+with $\text{spin}_i = \pm1$ for ccw/cw. $B$ is `allocation_matrix()` in
+`src/ariel/simulation/drone/plant.py`; the controller inverts it to turn a
+desired wrench into thrusts, and it is the object the plant's own dynamics
+should agree with (§3.2, where they do not).
+
+**Angular-acceleration allocation.** Dividing the moment block by inertia gives
+what the airframe can actually *do*:
+
+$$A = I^{-1}B_M \qquad [\text{rad·s}^{-2}\text{ per newton}]$$
+
+* **`alpha_roll`** $= \lVert A_{[0]}\rVert$, the norm of the roll row. Since
+  $\max_{\lVert f\rVert=1} \lvert A_{[0]}\cdot f\rvert = \lVert A_{[0]}\rVert$,
+  it is the largest roll angular acceleration obtainable per unit of thrust
+  effort. `alpha_pitch` and `alpha_yaw` are rows 1 and 2.
+* Torque alone gives the **opposite** ordering: widening a quad raises roll
+  torque (1.735 -> 3.896 N·m across the family) because lever arms grow, but
+  inertia grows faster, so roll *acceleration* falls (313.3 -> 121.3). A slalom
+  at 8.5 m/s allows roughly a quarter-second per corner to reverse bank, so the
+  acceleration is what matters.
+* **`maneuverability`** $=\lambda_\text{min}(B_M B_M^\top)$, airevolve's
+  descriptor: the weakest axis of the moment allocation. For **coplanar** rotors
+  that axis is always yaw, whose authority comes from $k_m/k_f$ and is
+  unchanged by in-plane geometry -- measured constant at 5.1e-04 across the
+  entire azimuth sweep *and* a 2x change in arm length. Pass `inertia=` for the
+  $I^{-1}B_M$ form, which does vary. It becomes informative for tilted rotors.
+
+### 7.6 Course and airframe quantities
+
+For a slalom of leg $s$ and turn angle $\theta$, consecutive legs run at
+$\pm\theta/2$ to the course axis, giving
+
+$$d = s\cos(\theta/2), \qquad A = \tfrac{s}{2}\sin(\theta/2), \qquad
+R = \frac{s}{2\sin(\theta/2)}, \qquad a_\text{lat} = \frac{v^2}{R}$$
+
+for gate spacing, lateral amplitude, corner radius and the lateral acceleration
+the course demands at speed $v$. Holding $s$ fixed (rather than $d$) is what
+makes $R$ fall monotonically with $\theta$.
+
+On the airframe side, with $n$ rotors of maximum thrust $T_\text{max}$,
+
+$$\text{TWR} = \frac{n\,T_\text{max}}{mg}, \qquad
+a_\text{lat}^\text{max} = g\sqrt{\text{TWR}^2-1}$$
+
+The second follows from tilting by $\phi$ while holding altitude: the vertical
+component supports weight, the horizontal turns, so $a_\text{lat}=g\tan\phi$ and
+the ceiling is set by $\cos\phi = 1/\text{TWR}$. For the SPEAR-matched quad
+(0.829 kg, TWR 5.24) that is 51 m/s^2 -- but see §2: the binding limit in
+practice is the *lower* motor bound, not total thrust.
+
+### 7.7 What a rollout measures
+
+| quantity | definition | why it is reported |
+|---|---|---|
+| `gates` | sequential count; stops at the first miss | racing semantics |
+| `gates_flown` | gates passed within half a gate, any order | flight quality without the lockout |
+| `tracking_err` | mean $\lVert p-p_\text{ref}\rVert$, **course phase only** | past `total_time` the reference clamps and the drone overruns; including it turned 0.37 m into 4.3 m |
+| `saturation_lo` | fraction of steps with a motor pinned at the lower bound | the allocation asked a rotor to *pull*: it ran out of differential range. This is the geometry-sensitive channel |
+| `saturation_hi` | fraction pinned at maximum | not enough total thrust. Measured 0.0% where the lower bound was 29% |
+| `survival` | steps flown / steps allotted | crash penalty |
+| `completed` | every gate passed | gates the speed and completion terms |
+
+### 7.8 The two objectives
+
+**Normalized** (`--objective normalized`): gates scored out of 100 plus a
+quality budget worth *half a gate*, so no combination of quality can outrank one
+more gate while the function stays continuous for an EA:
+
+$$\text{fitness} = 100\frac{g}{N} + \frac{1}{2}\cdot\frac{100}{N}\cdot
+\frac{q_\text{track}+q_\text{margin}+q_\text{survive}+q_\text{speed}}{4}$$
+
+with $q_\text{track}=e^{-\text{err}/(\text{gate}/2)}$ and
+$q_\text{margin}=1-\text{clipping}$.
+
+**Max completing speed** (`--max-speed-sweep`): the fastest $v$ at which a body
+still finishes, found by bisection because completion is monotone in speed
+(checked, 0 violations in 100+ bodies). Continuous by construction, with no
+operating point to calibrate -- it replaced fixed-speed scoring after nine
+operating points scored every body identically (§2).
+
+---
+
+## 8. Open items
 
 1. **Normal-aware plant (§3.2) -- the priority.** Guarded, not fixed. Blocks any experiment on
    arm elevation, motor cant, or tilted rotors — i.e. most of the interesting
@@ -687,7 +919,12 @@ flag nobody can safely change.
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
    across the family. If the spread jumps, morphology optimisation on this stack
    is really a co-design problem. *(Answered 2026-08-16: it does -- 2-5x.)*
-7. **Lee tracking above ~4 m/s.** Cruise tracking is excellent once settled
+7. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
+   upstream defects were fixed, what remained was that the position loop's
+   bandwidth had never been set relative to the attitude loop it sits outside
+   (§5.2, §7.4). Retuning took the X quad from 3.875 to 8.438 m/s. Use
+   `--att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0`. *Original entry:*
+   Cruise tracking is excellent once settled
    (0.07 m at 4 m/s), but feedforward is not tuned — enabling it removes the lag
    and introduces speed overshoot and altitude sag, so the loop wants redesigning
    as `a_des = a_ff + Kp·e_p + Kd·e_v` with gains derived for tracking rather
