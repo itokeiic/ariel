@@ -7,6 +7,19 @@ Read this before touching the drone EA, the Lee controller, or the B-spline gate
 trajectory: several defects were found in code that had already produced
 results, and some of those results should not be trusted.
 
+> **The one open bug that bounds what this codebase can currently claim.**
+> The plant ignores each rotor's thrust direction (§3.2). It simulates all
+> thrust along the body axis while the *controller* allocates using the true
+> normals, so a canted rotor is allocated as tilted and flown as axial. It is
+> **guarded, not fixed** -- `_guard_axial_thrust` warns, or raises under
+> `ARIEL_STRICT_THRUST_NORMALS=1`.
+>
+> Consequences: every result here is confined to arm azimuth and arm length,
+> the two axes the plant models correctly. **Arm elevation, motor cant, tilted
+> rotors and any fully-actuated design are not simulable today** -- which is
+> most of the interesting morphing directions, and the reason §7 item 1 is the
+> highest-value open item rather than a footnote.
+
 ---
 
 ## 1. What the work is for
@@ -454,11 +467,69 @@ PYTHONPATH="$USDLIBS" LD_LIBRARY_PATH="${USDLIBS}bin:<conda-env>/lib" \
   <conda-env>/bin/python your_script.py
 ```
 
+
+### 6.1 Every flag, and why it exists
+
+Defaults in brackets. Most of these exist because of a specific measurement in
+§2 or §3, named in the last column -- a flag whose reason is not recorded is a
+flag nobody can safely change.
+
+**Mode** (pick one; without any, the script runs the design map and both sweeps)
+
+| flag | default | why it exists |
+|---|---|---|
+| `--tracking-check` | off | Establishes the usable speed range on one canonical body *before* spending a sweep. Added after a full sweep was run at a speed where the controller could not track, making every body look identical. |
+| `--calibrate` | off | Grid over speed x turn angle, ranked by **spread across bodies** rather than mean score. Exists because a task everyone passes and a task everyone fails are equally useless for selecting a morphology, and we hit both. |
+| `--max-speed-sweep` | off | Scores each body by its own limiting speed (bisection). Replaces fixed-speed scoring, which sits on a cliff (§2). |
+| `--map-only` | off | Feasibility + geometry metrics with no rollouts, so the design space can be inspected in seconds. |
+
+**Course**
+
+| flag | default | why it exists |
+|---|---|---|
+| `--turn-deg` | 90 | The difficulty knob. Corner radius is `leg/(2 sin(turn/2))`, so this sets demanded lateral acceleration `v^2/R`. |
+| `--leg` | 2.4 | Held fixed while turn angle varies, because at fixed *spacing* a sharper turn also lengthens the legs and the corner gets wider -- the knob becomes non-monotonic (§5). |
+| `--n-gates` | 15 | Scored gates. Longer courses cost proportionally more per rollout. |
+| `--gate-size` | 1.0 | Gate opening. Must stay below the resulting gate spacing or gate planes overlap and a pass becomes ambiguous; `slalom_gates` asserts this. |
+| `--n-courses` | 5 | Layouts averaged per evaluation. The simulator is deterministic, so layout is the only sampling error. **Set 1 for max-speed sweeps**: a uniform slalom is one corner repeated, so there is nothing to overfit, and jitter would make each limit depend on whichever corner the RNG made sharpest. |
+| `--seed` | 0 | Base seed for the course set. |
+| `--jitter` | 0.25 | Per-corner turn-angle spread when `--n-courses > 1`. Note it raises effective difficulty even at constant mean, because a run is governed by its hardest corner. |
+
+**Speed and the bisection**
+
+| flag | default | why it exists |
+|---|---|---|
+| `--speed` | 6.0 | Nominal speed for fixed-speed modes. Traversal time is `startup + path_length/speed`, so this is a true speed, not a time budget. |
+| `--speed-lo` / `--speed-hi` | 2.0 / 6.0 | Initial bisection bracket. A body failing at `lo` is reported as unflyable rather than scored. |
+| `--speed-cap` | 12.0 | The bracket **widens upward** rather than clipping, since a ceiling would make good bodies tie -- the exact failure the max-speed objective exists to avoid. This bounds the widening. |
+| `--speed-tol` | 0.125 | Bisection resolution. Each halving costs one rollout; 0.0625 was used for the reported sweeps because the morphology spread is only 1-2 steps wide at 0.125. |
+| `--sim-margin` | 1.6 | Rollout time as a multiple of traversal time, so a lagging drone can still finish. Tracking error is accumulated only over the course itself -- past `total_time` the reference clamps and the drone overruns, which turned a 0.37 m cruise error into a reported 4.3 m. |
+| `--cal-speeds` / `--cal-turns` | 2,3,4 / 60,90,120 | The `--calibrate` grid. |
+| `--sweep-turns` | 60,90,120 | Corner sharpnesses for `--max-speed-sweep`. This is the *structured* generalisation check that replaces random jitter. |
+
+**Controller** (see §3.7 -- the first two are required above ~2 m/s)
+
+| flag | default | why it exists |
+|---|---|---|
+| `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§7 item 7). |
+| `--max-accel` | 5.0 | Commanded-acceleration clamp. The library default is below what an aggressive course demands (21 m/s^2) and far below what the airframe delivers (50), so while it binds **every morphology is limited by the same constant** and no sweep can see geometry. Use 40. |
+| `--fixed-gains` | off | Disables `auto_scale_gains`, so one controller flies every body. This is the co-design evidence: it widens the morphology spread 2-5x and makes the ordering monotone in roll agility (§2). |
+| `--pos-gain` / `--vel-gain` | 14.3 / 9.0 | Position and velocity gains, inherited from example 17. Exposed during the tracking investigation; 7x the position gain moved tracking by 10%, which is how gain tuning was ruled out as the cause of the lag. |
+
+**Scoring**
+
+| flag | default | why it exists |
+|---|---|---|
+| `--objective` | `normalized` | `normalized` = gates out of 100 plus a quality budget worth half a gate. `legacy` reproduces example 17's formula, whose non-gate terms are three orders of magnitude smaller than its gate term. |
+| `--gate-counting` | `sequential` | `sequential` stops at the first miss (racing semantics); `flown` counts every gate passed in any order. On identical flights these differ by 12 vs 14 gates, so it is a choice about the task. Both are recorded in every CSV whichever is active. |
+| `--points` | 11 | Morphologies per sweep, spread evenly across the feasible half-angle range. |
+| `--out-dir` | timestamped | Where CSVs land. |
+
 ---
 
 ## 7. Open items
 
-1. **Normal-aware plant (§3.2).** Guarded, not fixed. Blocks any experiment on
+1. **Normal-aware plant (§3.2) -- the priority.** Guarded, not fixed. Blocks any experiment on
    arm elevation, motor cant, or tilted rotors — i.e. most of the interesting
    morphing directions. The intended resolution is to move the plant to
    Isaac/PhysX rather than extend the reduced ODE, since PhysX models thrust
