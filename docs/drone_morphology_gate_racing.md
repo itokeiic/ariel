@@ -14,6 +14,10 @@ results, and some of those results should not be trusted.
 > **guarded, not fixed** -- `_guard_axial_thrust` warns, or raises under
 > `ARIEL_STRICT_THRUST_NORMALS=1`.
 >
+> It is a **regression introduced in ARIEL**, not inherited: airevolve's plant,
+> from which this one descends, computes `F_body = Bf @ U` and honours the
+> normals correctly. A twenty-line reference implementation therefore exists.
+>
 > Consequences: every result here is confined to arm azimuth and arm length,
 > the two axes the plant models correctly. **Arm elevation, motor cant, tilted
 > rotors and any fully-actuated design are not simulable today** -- which is
@@ -250,6 +254,49 @@ not simulated. **This is still open**: a normal-aware plant is the real fix, and
 it is why the sweeps here are confined to arm azimuth and length, the axes the
 plant models correctly. Arm elevation and motor cant are *not* trustworthy on
 this plant.
+
+**It is a regression, not an inherited limitation, and the fix has a working
+reference.** ARIEL's `DroneSimulator` descends from airevolve's (TU Delft
+lineage), and *airevolve's plant does not have this bug*. It builds the dynamics
+straight from the allocation matrices:
+
+```python
+F_body = Bf_sym @ U      # 3-D force, thrust along each rotor's own axis
+M_body = Bm_sym @ U
+I_inv  = Matrix(self.config.get_inertia_inverse(method="svd"))   # full tensor
+```
+
+ARIEL replaced that with the scalar `k_p_signed`/`k_q_signed` coefficients of
+`derive_reference_params` (commit `4ed7e5d`, "Migration started."), mirroring
+`experimentation/reference_drone_sim.py` -- a quadrotor-specific reference whose
+own comment concedes it "hardcodes signs for a specific motor layout". The trade
+made there:
+
+| | airevolve | ARIEL reference-form |
+|---|---|---|
+| thrust direction | **honoured** | ignored |
+| inertia | **full tensor** (SVD inverse) | diagonal, baked into scalars |
+| `omega x I omega` | dropped | dropped |
+| aerodynamic drag | absent | **present** (`k_x`, `k_y`) |
+| motor lag + sqrt-poly command | absent | **present** (`tau`) |
+| parity test against the reference | — | **yes** |
+
+It gained motor and drag fidelity and lost 3-D geometry fidelity; the loss does
+not appear to have been noticed, and the parity test now pins the reduced
+behaviour in place.
+
+**Fix path.** Two obstacles previously recorded here -- the yaw linearisation and
+the diagonal-inertia assumption -- were artefacts of the scalar form and
+disappear with it: `Bm @ U` gives all three moment axes quadratically and
+consistently, and airevolve already inverts the full tensor. Keep ARIEL's motor
+lag, drag and sqrt-poly mapping, and replace the force/moment computation with
+`F_body = Bf.W^2` and `omega_dot = I^-1 (Bm.W^2)`. The reference implementation
+is about twenty lines in
+`airevolve/simulator/simulation/drone_simulator.py:118-150`. The parity test
+will need re-basing, since it pins the behaviour being replaced.
+
+**Scope.** airevolve's own morphology results are unaffected -- its plant flies
+canted rotors correctly. The exposure is ARIEL-only.
 
 ### 3.3 `blueprint_to_usd` had never run (`73fcb21`)
 
