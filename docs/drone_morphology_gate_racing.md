@@ -857,12 +857,40 @@ inertias.
 1. *Large errors.* $\lVert e_R\rVert$ saturates (it is bounded by 1), so the
    effective proportional gain falls away from hover. The second-order reading is
    local; the $SO(3)$ law remains valid.
-2. *Off-diagonal inertia.* `auto_scale_gains` takes `np.diag(quad.params["IB"])`,
-   discarding $I_{xy}, I_{xz}, I_{yz}$, which `DroneConfiguration` does compute.
-   For the bilaterally symmetric family swept here they are identically zero
-   (measured: `max|off-diag| = 0.00e+00` for every body), so the decoupling is
-   exact. For an asymmetric morphology it is not, and the axes are coupled
-   through $I$ while the gains assume they are not.
+2. *Off-diagonal inertia -- and the fix (`--matrix-gains`).* The requirement is
+   not symmetry as such but that the **body axes are principal axes**, i.e. that
+   the products of inertia vanish. Coplanar rotors with a z-symmetric core give
+   $I_{xz}=I_{yz}=0$ for free; $I_{xy}=0$ needs a mirror plane containing z. The
+   family swept here has both mirrors, so it is exact (measured
+   `max|off-diag| = 0.00e+00`, not merely small). Break either and the axes
+   couple, while the default gains -- `np.diag(quad.params["IB"])` -- assume they
+   do not. Achieved bandwidth against a 24 rad/s target:
+
+   | body | max off-diagonal | diagonal gains | matrix gains |
+   |---|---|---|---|
+   | symmetric (swept family) | 0.00e+00 | 24.00 - 24.00 | 24.00 |
+   | one arm moved 30° | 9.70e-05 | 23.37 - 24.69 | **24.00** |
+   | unequal arm lengths | 3.68e-05 | 23.76 - 24.25 | **24.00** |
+   | arms tilted out of plane | 2.89e-04 | 22.11 - 26.03 | **24.00** |
+
+   The parameterisation itself is not the limitation. Using the **full tensor**,
+   $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, gives
+   $I^{-1}K_R=\omega_n^2\mathbb{1}$ **exactly for any symmetric
+   positive-definite $I$** -- no diagonality assumed. `--matrix-gains` enables
+   it; the gains become 3x3 and `compute_body_torque` applies them as
+   matrix-vector products.
+
+   Two measured consequences. On the symmetric family it is a **no-op**: the X
+   quad scores 8.438 m/s either way, bit-identical, so every result in this
+   document stands. On an asymmetric body (arm 0 moved 30°) it is *not* simply
+   better -- max speed 6.562 -> 6.469 m/s -- but tracking improves
+   (0.530 -> 0.511 m) and clipping falls (13.9% -> 11.0%). The diagonal form was
+   handing one axis about 3% more bandwidth than requested, which bought a little
+   speed at the cost of control effort. **For evolving morphologies this is the
+   point**: an EA over asymmetric bodies would otherwise reward whichever
+   airframe accidentally receives the most bandwidth, confounding geometry with
+   tuning exactly as `auto_scale_gains` at fixed bandwidth confounds it the other
+   way.
 3. *The gyroscopic term is cancelled but never simulated.* The control law adds
    $+\Omega\times I\Omega$ to cancel a term the reduced plant does not have:
    `dynamics_params` integrates $\dot{\Omega} = I^{-1}M$ with no

@@ -43,6 +43,9 @@ class LeeGeometricControl:
                  att_P_gain=None,                           # Attitude gains [kR_roll, kR_pitch, kR_yaw]
                  rate_P_gain=None,                          # Angular rate gains
                  auto_scale_gains=False,                    # Scale att/rate gains by inertia
+                 omega_n_att=12.0,                          # Attitude-loop bandwidth (rad/s)
+                 zeta_att=None,                             # Attitude-loop damping (default 1)
+                 matrix_gains=False,                        # Use the full inertia tensor
                  omega_n_pos=None,                          # Position-loop bandwidth (rad/s)
                  zeta_pos=None,                             # Position-loop damping ratio
                  velocity_feedforward=False,                # Track the trajectory's velocity
@@ -81,6 +84,9 @@ class LeeGeometricControl:
         self.orient = orient
         self.velocity_feedforward = bool(velocity_feedforward)
         self.max_accel = float(max_accel)
+        self.omega_n_att = float(omega_n_att)
+        zeta_att_arg = zeta_att
+        self.matrix_gains = bool(matrix_gains)
 
         # Position loop in second-order form, mirroring the attitude loop:
         #   e_p_ddot + K_vel * e_p_dot + K_pos * e_p = 0
@@ -110,10 +116,29 @@ class LeeGeometricControl:
         # closed-loop bandwidth. Underlying second-order shape:
         #   I·θ̈ + K_angvel·θ̇ + K_rot·θ = 0  →  K_rot = I·ω_n², K_angvel = 2·I·ω_n.
         if auto_scale_gains and att_P_gain is None and rate_P_gain is None:
-            I_diag = np.diag(np.asarray(quad.params["IB"]))
-            omega_n_att = 12.0  # rad/s; closed-loop attitude natural frequency
-            att_P_gain = I_diag * omega_n_att ** 2
-            rate_P_gain = 2.0 * I_diag * omega_n_att
+            I_full = np.asarray(quad.params["IB"], dtype=float)
+            I_diag = np.diag(I_full)
+            # Closed-loop attitude natural frequency. Now a parameter: the
+            # position loop must sit several times below it (measured optimum
+            # is a 6-10x separation; at or above it the two loops fight and the
+            # vehicle is unflyable at any speed), so the two bandwidths are one
+            # design choice, not two independent ones.
+            wn_att = float(omega_n_att)
+            zeta_att = 1.0 if zeta_att_arg is None else float(zeta_att_arg)
+            if matrix_gains:
+                # K_R = wn^2 I, K_omega = 2 zeta wn I, using the FULL tensor.
+                # Then I^-1 K_R = wn^2 * identity exactly, for any symmetric
+                # positive-definite I -- the axes decouple whether or not the
+                # body frame happens to be principal. With the diagonal form
+                # below, an asymmetric body gets a different effective
+                # bandwidth per axis: measured 23.37-24.69 rad/s against a
+                # 24 target for a quad with one arm moved 30 deg, and
+                # 22.11-26.03 for arms tilted out of plane.
+                att_P_gain = I_full * wn_att ** 2
+                rate_P_gain = 2.0 * zeta_att * I_full * wn_att
+            else:
+                att_P_gain = I_diag * wn_att ** 2
+                rate_P_gain = 2.0 * zeta_att * I_diag * wn_att
 
         if att_P_gain is None:
             att_P_gain = np.array([0.3, 0.3, 0.1])

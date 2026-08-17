@@ -128,6 +128,23 @@ parser.add_argument("--gain-scan", action="store_true",
                          "carried over from a 93 g drone on near-straight "
                          "courses and never re-derived for tracking.")
 parser.add_argument("--scan-omega", default="2,3,4,6,8,11")
+parser.add_argument("--asym-deg", type=float, default=0.0,
+                    help="perturb arm 0's azimuth by this many degrees, breaking "
+                         "the bilateral symmetry. An asymmetric body has non-zero "
+                         "products of inertia, which is where diagonal and matrix "
+                         "gains diverge -- and is what an EA will produce.")
+parser.add_argument("--matrix-gains", action="store_true",
+                    help="derive attitude gains from the FULL inertia tensor "
+                         "rather than its diagonal. Exact for any airframe; "
+                         "with the diagonal form an asymmetric body gets a "
+                         "different effective bandwidth per axis (23.37-24.69 "
+                         "rad/s against a 24 target for one arm moved 30 deg), "
+                         "which would confound an EA over asymmetric bodies.")
+parser.add_argument("--att-omega-n", type=float, default=12.0,
+                    help="attitude-loop bandwidth. The position optimum tracks "
+                         "this: raising it should permit a stiffer position "
+                         "loop and, if cascade separation is what governs, a "
+                         "higher ceiling.")
 parser.add_argument("--scan-zeta", default="0.7,1.0,1.4")
 parser.add_argument("--pos-omega-n", type=float, default=None)
 parser.add_argument("--pos-zeta", type=float, default=None)
@@ -230,6 +247,8 @@ def make_genome(half_angle: float, arm_length: float = ARM_LENGTH) -> np.ndarray
     reduced plant models this airframe correctly.
     """
     az = np.array([half_angle, np.pi - half_angle, np.pi + half_angle, -half_angle])
+    if args.asym_deg:
+        az[0] += np.radians(args.asym_deg)
     g = np.zeros((N_ARMS, 6), dtype=float)
     g[:, 0] = arm_length
     g[:, 1] = az
@@ -314,6 +333,7 @@ def _build_stack(propellers, course, total_time):
         pos_P_gain=(None if args.pos_omega_n else np.array([args.pos_gain] * 3)),
         vel_P_gain=(None if args.pos_omega_n else np.array([args.vel_gain] * 3)),
         omega_n_pos=args.pos_omega_n, zeta_pos=args.pos_zeta,
+        omega_n_att=args.att_omega_n, matrix_gains=args.matrix_gains,
     )
     # The trajectory flies the lead-out; only the detector sees scored gates.
     # Without it the reference clamps on the final gate, and a drone arriving at
@@ -655,15 +675,17 @@ def gain_scan() -> list[dict]:
     genome = make_genome(np.pi / 4)
     omegas = [float(v) for v in args.scan_omega.split(",")]
     zetas = [float(v) for v in args.scan_zeta.split(",")]
-    console.rule(f"position-gain scan — X quad, {args.turn_deg:.0f}° slalom "
-                 f"(inherited: omega_n=3.78, zeta=1.19)")
+    console.rule(f"position-gain scan — X quad, {args.turn_deg:.0f}° slalom, "
+                 f"attitude loop {args.att_omega_n:.0f} rad/s "
+                 f"(inherited position: omega_n=3.78, zeta=1.19)")
     rows = []
     for z in zetas:
         for w in omegas:
             args.pos_omega_n, args.pos_zeta = w, z
             t0 = time.time()
             r = max_completing_speed(genome, course)
-            rows.append({"omega_n": w, "zeta": z, "max_speed": r["max_speed"],
+            rows.append({"omega_n": w, "zeta": z, "omega_n_att": args.att_omega_n,
+                         "ratio": args.att_omega_n / w, "max_speed": r["max_speed"],
                          "tracking_err": r["tracking_err"],
                          "saturation_lo": r["saturation_lo"],
                          "n_rollouts": r["n_rollouts"], "monotone": int(r["monotone"])})

@@ -174,9 +174,18 @@ class BaseLeeController:
         # `rotation_error` already equals Lee's e_R (sign convention from
         # `0.5·vee(R_d^T R - R^T R_d)`), and `angvel_error` equals e_omega, so all
         # three terms emit body torque in physical N·m with no downstream negation.
+        # Gains are either 3-vectors (applied elementwise, i.e. a diagonal gain
+        # matrix) or full 3x3 matrices. The matrix form is what makes the
+        # (omega_n, zeta) parameterisation exact for an asymmetric airframe:
+        # with K_R = omega_n^2 I using the full tensor, I^-1 K_R is exactly
+        # omega_n^2 * identity whether or not the body frame is principal.
+        def _apply(K, e):
+            K = np.asarray(K)
+            return K @ e if K.ndim == 2 else K * e
+
         torque = (
-            -self.K_rot_current * rotation_error
-            - self.K_angvel_current * angvel_error
+            -_apply(self.K_rot_current, rotation_error)
+            - _apply(self.K_angvel_current, angvel_error)
             + feed_forward_body_rates
         )
 
