@@ -46,8 +46,28 @@ ARGPARSE_RE = re.compile(r"add_argument\(\s*[\"']--([a-z][a-z0-9_-]*)")
 EXTERNAL_FLAGS = {
     "no-sync", "help", "quiet", "version", "active", "no-video", "out-dir",
     "python", "directory",
+    # Defined by the SPEAR consortium's Isaac scripts, which are supplied by
+    # the consortium and not tracked here -- see EXTERNAL_PREFIXES.
+    "base_body_name",
 }
+# Referenced from documents but not part of this repository, so not checkable.
+# A path under one of these is skipped rather than reported missing.
+EXTERNAL_PREFIXES = ("airevolve/", "examples/spear_vua_upb/", "/", "~", "http")
 IDENT_RE = re.compile(r"^[A-Za-z_][\w.]*(?:\(\))?$")
+
+
+def tracked_files() -> set[str]:
+    """Files a fresh clone would have.
+
+    The working tree is the wrong authority: it contains untracked scratch and
+    consortium-supplied files, so checking against it passes locally and fails
+    for everyone else -- exactly the drift this tool exists to catch.
+    """
+    if not hasattr(tracked_files, "_cache"):
+        r = subprocess.run(["git", "ls-files"], cwd=REPO,
+                           capture_output=True, text=True, timeout=30)
+        tracked_files._cache = set(r.stdout.split())
+    return tracked_files._cache
 
 
 def repo_has(needle: str) -> bool:
@@ -103,8 +123,7 @@ def check(doc: Path, quiet: bool) -> list[str]:
 
     # --- scripts this document tells the reader to run; their real flags ---
     referenced_scripts = {
-        m for m in re.findall(r"[\w./-]+\.py", text)
-        if (REPO / m).is_file()
+        m for m in re.findall(r"[\w./-]+\.py", text) if m in tracked_files()
     }
     known_flags = set(EXTERNAL_FLAGS)
     for sc in referenced_scripts:
@@ -135,13 +154,12 @@ def check(doc: Path, quiet: bool) -> list[str]:
             continue                          # the doc is asserting absence
         # --- path:line citations ---
         for path, start, end in CITE_RE.findall(line):
-            if path.startswith(("airevolve/", "/", "~", "http")):
+            if path.startswith(EXTERNAL_PREFIXES):
                 continue                      # outside this repo
-            p = REPO / path
-            if not p.is_file():
+            if path not in tracked_files():
                 fails.append(f"{doc.name}:{n}  cite -> missing file: {path}")
                 continue
-            total = len(p.read_text().split("\n"))
+            total = len((REPO / path).read_text().split("\n"))
             hi = int(end or start)
             if hi > total:
                 fails.append(
@@ -171,10 +189,12 @@ def check(doc: Path, quiet: bool) -> list[str]:
                 base = (toks[-1] if toks else t).split(":")[0]
                 if any(ch in base for ch in "*?"):
                     continue                  # a glob, not a claim
-                if (REPO / base).exists():
-                    ok["paths"] += 1
-                elif base.startswith(("airevolve/", "/", "~", "http")):
+                if base.startswith(EXTERNAL_PREFIXES):
                     continue                  # outside this repo, not checkable
+                if base in tracked_files() or (
+                        REPO / base).is_dir() and base in {
+                        f.rsplit("/", 1)[0] for f in tracked_files() if "/" in f}:
+                    ok["paths"] += 1
                 else:
                     fails.append(f"{doc.name}:{n}  path -> not found: {base}")
             elif IDENT_RE.fullmatch(t) and len(t) > 4 and "_" in t or t.endswith("()"):
