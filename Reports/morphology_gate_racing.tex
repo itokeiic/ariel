@@ -152,6 +152,19 @@ acceleration. Gentle corners flown at \SI{12}{\metre\per\second} do not, and
 there the narrow frame's weak pitch authority ($\alpha_\theta=\num{\PitchNarrow}$
 against $\num{\RollNarrow}$ in roll) costs it.
 
+\paragraph{Correction pending (2026-08-17).} The completion test behind these
+numbers, \texttt{GateChecker}, measures lateral error in the horizontal plane
+only, so altitude is never checked and a drone that sinks below the gates still
+records passes. Re-running with completion requiring three-dimensional proximity
+to every gate lowers the $60^\circ$ column by \SIrange{8.3}{17.8}{\percent}, and
+that column then spans only \SIrange{9.926}{10.137}{\metre\per\second}---a
+\SI{2.1}{\percent} spread instead of \SI{12}{\percent}. The claims below about
+the $60^\circ$ column, including the widest frame being competitive there, do
+\emph{not} survive that correction. The $90^\circ$ and $120^\circ$ columns move
+by less than the bisection tolerance and stand, so the corner-sharpness trend
+between them is unaffected. Details in
+\texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
+
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: its top four values
 differ by less than the \SI{0.0625}{\metre\per\second} bisection tolerance. The
 $120^\circ$ optimum is a tie between $28.63^\circ$ and $36.81^\circ$. The

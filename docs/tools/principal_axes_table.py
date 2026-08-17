@@ -29,26 +29,18 @@ import numpy as np
 from ariel.body_phenotypes.drone.backends import blueprint_to_propellers
 from ariel.body_phenotypes.drone.decoders import spherical_angular_to_blueprint
 from ariel.simulation.drone.drone_configuration import DroneConfiguration
+from ariel.simulation.drone.reference_morphologies import reference_morphologies
 
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "docs" / "data" / "principal_axes.csv"
 OUT_SENS = REPO / "docs" / "data" / "principal_axes_sensitivity.csv"
 
 # Matches the sweep: SPEAR-matched quad, 5" props, 0.20 m arms, 24 rad/s target.
-WN, HALF, L, PAYLOAD, PROP_SIZE = 24.0, np.pi / 4, 0.20, 0.667, 5
-X = np.array([HALF, np.pi - HALF, np.pi + HALF, -HALF])
+WN, PAYLOAD, PROP_SIZE = 24.0, 0.667, 5
 
-
-def inertia(azimuth, lengths, elevation=None) -> np.ndarray:
-    g = np.zeros((4, 6))
-    g[:, 0] = lengths
-    g[:, 1] = azimuth
-    if elevation is not None:
-        g[:, 2] = elevation
-    g[:, 3] = np.pi
-    g[:, 5] = np.arange(4) % 2
+def inertia(genome: np.ndarray) -> np.ndarray:
     props = blueprint_to_propellers(
-        spherical_angular_to_blueprint(g, propsize=PROP_SIZE), convention="z_up")
+        spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="z_up")
     return DroneConfiguration(props, payload_mass=PAYLOAD).inertia_matrix
 
 
@@ -72,19 +64,13 @@ def misalignment_deg(I: np.ndarray) -> float:
 
 
 def bodies() -> dict[str, np.ndarray]:
-    """One-arm perturbations of the X quad, one degree of freedom each.
+    """Inertia tensors of the canonical family, keyed by label.
 
-    Symmetric perturbations are useless as illustrations here: alternating
-    +/-15 deg of arm elevation leaves the products of inertia at exactly zero,
-    which is precisely why the swept family is principal to begin with.
+    The airframes themselves live in
+    ariel.simulation.drone.reference_morphologies, shared with the sweep, so
+    the document and the experiment cannot drift apart.
     """
-    return {
-        "symmetric X quad (swept family)": inertia(X, L),
-        "arm 0 azimuth +30 deg": inertia(X + np.radians([30, 0, 0, 0]), L),
-        "arm 0 lengthened to 0.26 m": inertia(X, np.array([0.26, L, L, L])),
-        "arm 0 elevated 15 deg (out of plane)":
-            inertia(X, L, elevation=np.radians([15, 0, 0, 0])),
-    }
+    return {m.label: inertia(m.genome) for m in reference_morphologies().values()}
 
 
 def rows() -> list[dict]:

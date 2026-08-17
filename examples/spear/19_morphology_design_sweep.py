@@ -74,6 +74,10 @@ from ariel.simulation.drone.plant import (
     rank_controllability,
 )
 from ariel.simulation.tasks.slalom_course import slalom_gates
+from ariel.simulation.drone.reference_morphologies import reference_morphologies
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _flight_video
 
 console = Console()
 
@@ -218,6 +222,34 @@ parser.add_argument("--objective", choices=("normalized", "legacy"),
                          "worth half a gate (tracking, control margin, "
                          "survival, speed). legacy: example 17's formula, for "
                          "reproducing its numbers.")
+parser.add_argument("--video", action="store_true",
+                    help="fly one airframe on one course and render an mp4. "
+                         "Uses the same rollout as the sweep, with recording "
+                         "enabled, so the video shows the flight that is scored "
+                         "rather than a re-simulation of it.")
+parser.add_argument("--video-half-angle", type=float, default=None,
+                    help="arm half-angle in degrees to fly for --video. "
+                         "Default: the best body for the requested turn angle, "
+                         "read from the committed sweep in docs/data/.")
+parser.add_argument("--video-speed", type=float, default=None,
+                    help="flight speed for --video, m/s. Default: that body's "
+                         "max completing speed, found by bisection.")
+parser.add_argument("--video-fps", type=int, default=50)
+parser.add_argument("--completion", choices=("sequential", "flown3d"),
+                    default="sequential",
+                    help="what counts as completing the course. 'sequential' "
+                         "uses GateChecker, whose lateral test is HORIZONTAL "
+                         "ONLY, so altitude sag goes unpenalised. 'flown3d' "
+                         "requires passing within half a gate opening of every "
+                         "gate centre in 3-D.")
+parser.add_argument("--log-npz", default=None,
+                    help="with --video, also save the recorded trajectory as "
+                         ".npz for offline analysis")
+parser.add_argument("--perturbation-sweep", action="store_true",
+                    help="max completing speed for each canonical single-arm "
+                         "perturbation in reference_morphologies. Measures how "
+                         "much asymmetry costs, and is the flight counterpart "
+                         "to the inertia table in the docs.")
 parser.add_argument("--out-dir", default=None)
 args = parser.parse_args()
 
@@ -359,7 +391,7 @@ def _build_stack(propellers, course, total_time):
     return drone, ctrl, traj, checker, wind
 
 
-def rollout(propellers, course, speed) -> dict:
+def rollout(propellers, course, speed, *, record: bool = False) -> dict:
     total_time = course.traversal_time(speed, startup_time=STARTUP_TIME)
     sim_time = total_time * args.sim_margin
     try:
@@ -368,7 +400,8 @@ def rollout(propellers, course, speed) -> dict:
         return {"fit": None, "gates": 0, "survival": 0.0,
                 "tracking_err": float("inf"), "completed": False,
                 "completed_flown": False, "saturation": 1.0,
-                "saturation_hi": 1.0, "saturation_lo": 1.0, "gates_flown": 0}
+                "saturation_hi": 1.0, "saturation_lo": 1.0, "gates_flown": 0,
+                "completed_3d": False, "log": None}
 
     n_steps = int(sim_time / SIM_DT)
     w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
@@ -381,6 +414,10 @@ def rollout(propellers, course, speed) -> dict:
     # the geometry-sensitive one: more moment per newton of differential means
     # less need to drive a rotor toward zero.
     sat_hi = sat_lo = 0
+    # Recording is opt-in: the sweep runs thousands of rollouts and has no use
+    # for the trajectory, but the video mode needs it and must fly the *same*
+    # code path, not a re-implementation of it.
+    log: dict[str, list] = {"t": [], "pos": [], "ref": [], "euler": [], "w": []}
     # Tracking error is accumulated only while the course is running. After
     # total_time the reference clamps at the final gate while the drone is
     # still arriving, so post-course error swamps everything: at 4 m/s the
@@ -412,6 +449,12 @@ def rollout(propellers, course, speed) -> dict:
             steps += 1
             if t_new <= total_time:
                 course_steps += 1
+            if record:
+                log["t"].append(t_new)
+                log["pos"].append(np.array(drone.pos, dtype=float).copy())
+                log["ref"].append(np.array(sDes[:3], dtype=float).copy())
+                log["euler"].append(np.array(drone.euler, dtype=float).copy())
+                log["w"].append(w.copy())
             closest = np.minimum(
                 closest, np.linalg.norm(course.gate_pos - drone.pos, axis=1))
             t, i = t_new, i + 1
@@ -439,6 +482,12 @@ def rollout(propellers, course, speed) -> dict:
         "saturation_hi": sat_hi / steps if steps else 1.0,
         "saturation_lo": sat_lo / steps if steps else 1.0,
         "gates_flown": gates_flown,
+        # Completion under a 3-D criterion: within half a gate opening of every
+        # gate centre, altitude included. GateChecker's own test is horizontal
+        # only (it uses pos[:2]), so a drone that sags below the gates still
+        # registers passes.
+        "completed_3d": bool(np.all(closest <= course.gate_size / 2.0)),
+        "log": {k: np.asarray(v) for k, v in log.items()} if record else None,
     }
 
 
@@ -579,10 +628,12 @@ def max_completing_speed(genome: np.ndarray, course) -> dict:
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
     tested: dict[float, dict] = {}
 
+    key = "completed_3d" if args.completion == "flown3d" else "completed_flown"
+
     def completes(v: float) -> bool:
         if v not in tested:
             tested[v] = rollout(props, course, v)
-        return bool(tested[v]["completed_flown"])
+        return bool(tested[v][key])
 
     lo, hi = float(args.speed_lo), float(args.speed_hi)
     if not completes(lo):
@@ -607,7 +658,7 @@ def max_completing_speed(genome: np.ndarray, course) -> dict:
 
     # Monotonicity: no tested speed above the limit may have completed, and
     # none below it may have failed.
-    monotone = all((v <= lo) == o["completed_flown"] or abs(v - lo) < 1e-9
+    monotone = all((v <= lo) == o[key] or abs(v - lo) < 1e-9
                    for v, o in tested.items())
     return {"max_speed": lo, "n_rollouts": len(tested), "bracket": "ok",
             "monotone": monotone, **tested[lo]}
@@ -828,6 +879,8 @@ def _write_csv(rows: list[dict], path: Path) -> None:
         for k in r:
             if k not in keys:
                 keys.append(k)
+    keys = [k for k in keys if k != "log"]
+    rows = [{k: v for k, v in r.items() if k != "log"} for r in rows]
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
@@ -835,8 +888,120 @@ def _write_csv(rows: list[dict], path: Path) -> None:
     console.log(f"  → {path}")
 
 
+def best_half_angle_for(turn: float) -> float:
+    """Best arm half-angle at this turn angle, from the committed sweep.
+
+    Read from docs/data/ rather than re-run: those CSVs are the published
+    result, so a video made from them illustrates the paper rather than a
+    fresh run that might land elsewhere within the bisection tolerance.
+    """
+    files = {60.0: "tuned_60deg.csv", 90.0: "tuned_90deg.csv",
+             120.0: "tuned_60_120deg.csv"}
+    if turn not in files:
+        msg = f"no committed sweep for a {turn:g}° slalom; pass --video-half-angle"
+        raise SystemExit(msg)
+    path = Path(__file__).resolve().parents[2] / "docs" / "data" / files[turn]
+    with path.open() as fh:
+        rows = [r for r in csv.DictReader(fh)
+                if abs(float(r["turn_deg"]) - turn) < 1e-9]
+    best = max(rows, key=lambda r: float(r["max_speed"]))
+    ties = [r for r in rows
+            if abs(float(r["max_speed"]) - float(best["max_speed"])) < 1e-9]
+    if len(ties) > 1:
+        angles = ", ".join(f"{float(r['half_angle_deg']):.2f}°" for r in ties)
+        console.log(f"  [yellow]tie at {turn:.0f}°[/yellow]: {angles} all reach "
+                    f"{float(best['max_speed']):.3f} m/s; flying the first")
+    return float(min(float(r["half_angle_deg"]) for r in ties))
+
+
+def video() -> None:
+    """Fly one airframe on one course and render it."""
+    turn = float(args.turn_deg)
+    half_deg = (args.video_half_angle if args.video_half_angle is not None
+                else best_half_angle_for(turn))
+    g = make_genome(np.radians(half_deg))
+    course = slalom_gates(turn, leg=args.leg, n_gates=args.n_gates,
+                          gate_size=args.gate_size)
+    console.rule(f"video — {turn:.0f}° slalom, t={half_deg:.2f}°")
+
+    if args.video_speed is not None:
+        speed = float(args.video_speed)
+    else:
+        r = max_completing_speed(g, course)
+        speed = float(r["max_speed"])
+        console.log(f"  max completing speed {speed:.3f} m/s "
+                    f"({r['n_rollouts']} rollouts, bracket={r['bracket']})")
+
+    props = blueprint_to_propellers(
+        spherical_angular_to_blueprint(g, propsize=PROP_SIZE), convention="ned")
+    out = rollout(props, course, speed, record=True)
+    if out["log"] is None or not len(out["log"]["t"]):
+        msg = "rollout produced no trajectory; nothing to render"
+        raise SystemExit(msg)
+    console.log(f"  flew {out['gates_flown']}/{len(course.gate_pos)} gates, "
+                f"tracking {out['tracking_err']:.3f} m, "
+                f"clip_lo {100 * out['saturation_lo']:.1f}%")
+
+    if args.log_npz:
+        np.savez(args.log_npz, **out["log"],
+                 gate_pos=course.gate_pos, gate_yaw=course.path_yaw[:len(course.gate_pos)],
+                 gate_size=course.gate_size)
+        console.log(f"  → {args.log_npz}")
+
+    path = DATA / f"slalom_{turn:.0f}deg_t{half_deg:.2f}_{speed:.3f}ms.mp4"
+    _flight_video.render(
+        path, out["log"], course, g,
+        title=f"{turn:.0f}° slalom — arm half-angle {half_deg:.2f}°, {speed:.3f} m/s",
+        subtitle=(f"{out['gates_flown']}/{len(course.gate_pos)} gates · "
+                  f"R={course.radius:.2f} m · tracking {out['tracking_err']:.2f} m · "
+                  f"motor clip {100 * out['saturation_lo']:.0f}%"),
+        prop_radius=PROP_RADIUS, fps=args.video_fps)
+    console.log(f"  → {path}")
+
+
+def perturbation_sweep() -> list[dict]:
+    """Max completing speed for each canonical single-arm perturbation.
+
+    The flight counterpart to the inertia table in the docs: that one shows what
+    asymmetry does to the *commanded* attitude response, this one shows what it
+    costs in the air.
+    """
+    turns = [float(v) for v in args.sweep_turns.split(",")]
+    fam = reference_morphologies(arm_length=ARM_LENGTH)
+    rows: list[dict] = []
+    for turn in turns:
+        course = slalom_gates(turn, leg=args.leg, n_gates=args.n_gates,
+                              gate_size=args.gate_size)
+        console.rule(f"perturbation sweep — {turn:.0f}° slalom")
+        for m in fam.values():
+            t0 = time.time()
+            r = max_completing_speed(m.genome, course)
+            geo = describe(m.genome)
+            rows.append({
+                "turn_deg": turn, "key": m.key, "label": m.label,
+                "axial_thrust": int(m.axial_thrust),
+                "max_speed": r["max_speed"], "bracket": r["bracket"],
+                "monotone": int(r["monotone"]), "n_rollouts": r["n_rollouts"],
+                "tracking_err": r["tracking_err"],
+                "saturation_lo": r["saturation_lo"],
+                "alpha_roll": geo["alpha_roll"], "alpha_pitch": geo["alpha_pitch"],
+                "note": m.note,
+            })
+            warn = "" if m.axial_thrust else "  [red]NON-AXIAL: plant invalid[/red]"
+            console.log(f"  {m.key:<10} {r['max_speed']:6.3f} m/s  "
+                        f"trk {r['tracking_err']:5.3f}  "
+                        f"clip {100 * r['saturation_lo']:4.1f}%  "
+                        f"({time.time() - t0:.0f}s){warn}")
+    _write_csv(rows, DATA / f"perturbation_{RUN_ID}.csv")
+    return rows
+
+
 if __name__ == "__main__":
-    if args.gain_scan:
+    if args.video:
+        video()
+    elif args.perturbation_sweep:
+        perturbation_sweep()
+    elif args.gain_scan:
         gain_scan()
     elif args.max_speed_sweep:
         max_speed_sweep()

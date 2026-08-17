@@ -45,6 +45,12 @@ Two constraints shape everything below:
 
 ## 2. The headline experimental result
 
+> **SUPERSEDED for the 60° column (2026-08-17).** The completion test behind
+> these numbers ignores altitude (§3.8), and the 60° column is inflated by up to
+> 17.8% as a result. Corrected values are in `docs/data/tuned_3d_completion.csv`.
+> The 90° and 120° columns move by less than the bisection tolerance and stand.
+
+
 **Static arm geometry is invisible to this task across almost all of its
 operating range, and where it becomes visible, it does so through a cliff.**
 
@@ -434,6 +440,59 @@ The clamp defaulted to 5.0 m/s² — below what an aggressive course demands
 every morphology is limited by the same constant.
 
 ---
+
+### 3.8 The gate-pass test ignores altitude (found 2026-08-17, NOT yet fixed)
+
+`GateChecker.check_gate_passing` records a pass when the drone crosses the gate
+plane within half a gate opening **laterally** -- and it measures that laterally
+in the horizontal plane only:
+
+```python
+lateral_err = np.linalg.norm(pos[:2] - gate_p[:2] - signed_dist * normal[:2])
+if lateral_err <= self.gate_size / 2.0:
+```
+
+`pos[:2]` drops z, so a drone flying a metre below the gate centres passes every
+gate. The gate is effectively an infinitely tall slot rather than a
+\SI{1}{\metre} opening.
+
+This was found by rendering a flight to video (§6.1, `--video`). The 60° video at
+the published limit speed showed the drone tracking the course laterally while
+sinking steadily; the checker scored 15/15 while only 6 gates were passed within
+half an opening in 3-D. Measured altitude error at each gate for the
+t=36.81° body at 12.172 m/s -- commanded altitude 1.5 m throughout:
+
+| gate | 0 | 5 | 7 | 10 | 14 |
+|---|---|---|---|---|---|
+| lateral error (checked) | 0.13 m | 0.50 m | 0.22 m | 0.37 m | 0.34 m |
+| altitude error (**not** checked) | 0.04 m | 0.19 m | 0.54 m | 0.75 m | **0.90 m** |
+
+The sag is a slow leak, not a transient: it grows monotonically down the course.
+It matters most where speed is highest, which is why it distorts the 60° column
+and leaves 120° untouched. Re-running the sweep with completion requiring 3-D
+proximity to every gate (`--completion flown3d`,
+`docs/data/tuned_3d_completion.csv`):
+
+| turn | change in max speed | argmax |
+|---|---|---|
+| 60° | **-8.3% to -17.8%** | 36.81° -> 28.63°, but three bodies now tie |
+| 90° | -5.0% to +0.2% | 36.81° -> 45.00°, within bisection tolerance |
+| 120° | 0.0% at every point | unchanged |
+
+**What this invalidates.** The 60° column of §2 is not a measurement of how fast
+these airframes can fly the course; it is partly a measurement of how far they
+sink. Under the corrected criterion that column spans 9.926-10.137 m/s -- a 2.1%
+spread rather than 12% -- so the report's claim that the widest frame is
+"competitive at 60°" while the narrowest is "last" does not survive: the widest
+is last (9.926) and the narrowest second-last (9.961), separated by less than
+three bisection tolerances. **The 90° and 120° columns are essentially
+unchanged, so the corner-sharpness trend across those two survives intact.**
+
+Not fixed here because the fix is a decision, not a patch: whether a gate is a
+plane with a circular opening, a square frame, or a slot changes what the task
+is, and `GateChecker` is shared with `src/ariel/ec/drone/evaluators/lee_tune_evaluator.py`. `--completion
+flown3d` makes the stricter rule available meanwhile, and everything reported
+after 2026-08-17 uses it.
 
 ## 4. What was built
 
@@ -1170,6 +1229,8 @@ uniform slalom unless a course set is named.
 | §5.2 position-gain scan | `docs/data/gain_scan_att12.csv`, `gain_scan_att12_low.csv` | `--gain-scan --scan-omega 2,3.78,5,7,9,12 --scan-zeta 0.7,1.19,1.6` and `--scan-omega 0.8,1.2,1.6,2.0,2.6,3.2 --scan-zeta 1.0,1.19,1.4` |
 | §5.2 attitude-bandwidth scan | `docs/data/gain_scan_att{6,24,36}.csv` | `--gain-scan --att-omega-n {6,24,36} --scan-zeta 1.0` with `--scan-omega` bracketing a 6-12x ratio |
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
+| §3.8 3-D completion re-run | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
+| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 
 **Checking this document.** `docs/tools/check_doc_claims.py` verifies the parts
