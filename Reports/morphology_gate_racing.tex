@@ -159,7 +159,9 @@ airframe, was the limit.
 
 Figures and table are generated from the repository by
 \texttt{Reports/make\_figures.py}: geometry from the decoder and plant interface,
-speeds from the CSVs in \texttt{docs/data/}. Rebuild with
+speeds from the CSVs in \texttt{docs/data/}. The figures are \emph{not} tracked
+--- this repository gitignores \texttt{*.pdf} --- so the generator must be run
+before the first build of a fresh clone. Rebuild with
 
 \begin{quote}\ttfamily\small
 uv run --no-sync python Reports/make\_figures.py \\
