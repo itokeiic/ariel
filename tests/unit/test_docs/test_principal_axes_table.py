@@ -82,6 +82,25 @@ def test_misalignment_is_ill_conditioned_but_the_dynamics_are_not() -> None:
     assert small["misalignment_deg"] > 25.0, "expected a large axis swing"
 
 
+def test_headline_and_perturbation_tables_in_the_doc_are_current() -> None:
+    """Both embedded result tables still match the data behind them.
+
+    Section 2's headline table and section 7.2d's flight table are pasted into
+    the document. A pasted table is exactly what went stale before, so both are
+    pinned against their generators.
+    """
+    sys.path.insert(0, str(REPO / "docs" / "tools"))
+    import headline_table  # noqa: PLC0415
+
+    doc = DOC.read_text()
+    assert headline_table.table().strip() in doc, (
+        "section 2 headline table is stale -- rerun docs/tools/headline_table.py")
+    pert = (REPO / "docs" / "data" / "perturbation_table.md").read_text()
+    assert pert.strip() in doc, (
+        "section 7.2d perturbation table is stale -- rerun "
+        "docs/tools/perturbation_figure.py")
+
+
 def test_matrix_gains_recover_the_target_on_every_body() -> None:
     """K_R = wn^2 I gives I^-1 K_R = wn^2 * 1, for any symmetric positive-definite I.
 
