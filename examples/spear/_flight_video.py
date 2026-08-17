@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FFMpegWriter
 
+from ariel.simulation.drone.gate_metrics import crossing_report, n_passed
+
 INK, ACCENT, GOOD, BAD, MUTED = "#1a202c", "#2b6cb0", "#2f855a", "#c53030", "#a0aec0"
 
 
@@ -31,6 +33,9 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
 
     gates, gate_yaw = course.gate_pos, course.path_yaw[:len(course.gate_pos)]
     half = course.gate_size / 2.0
+    # Verdict per gate, judged where it must be judged: in the gate plane, at
+    # the crossing, altitude included.
+    report = crossing_report(pos, gates, gate_yaw, course.gate_size)
 
     fig = plt.figure(figsize=(12.0, 6.4))
     gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 1.0], hspace=0.28)
@@ -42,6 +47,16 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     # zigzag through the waypoints -- a path nothing ever follows.
     ax.plot(ref[:, 0], ref[:, 1], "-", color=MUTED, lw=1.1, zorder=1,
             label="reference (B-spline)")
+    # Lead-out waypoints: not scored, but they are why the reference keeps
+    # going past the last gate instead of decelerating onto it. Drawn so their
+    # absence from the scoring is visible rather than implied.
+    for g, yaw in zip(course.path_pos[len(gates):], course.path_yaw[len(gates):]):
+        n = np.array([np.cos(yaw + np.pi / 2), np.sin(yaw + np.pi / 2)]) * half
+        ax.plot([g[0] - n[0], g[0] + n[0]], [g[1] - n[1], g[1] + n[1]], "-",
+                color=MUTED, lw=2.0, alpha=0.7, solid_capstyle="butt", zorder=2,
+                label="_lead-out")
+    ax.plot([], [], "-", color=MUTED, lw=2.0, alpha=0.7, label="lead-out (unscored)")
+
     gate_lines = []
     for g, yaw in zip(gates, gate_yaw):
         n = np.array([np.cos(yaw + np.pi / 2), np.sin(yaw + np.pi / 2)]) * half
@@ -52,6 +67,8 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     pad = 1.2
     xs = np.concatenate([ref[:, 0], pos[:, 0], gates[:, 0]])
     ys = np.concatenate([ref[:, 1], pos[:, 1], gates[:, 1]])
+    xs = np.concatenate([xs, course.path_pos[:, 0]])
+    ys = np.concatenate([ys, course.path_pos[:, 1]])
     ax.set_xlim(xs.min() - pad, xs.max() + pad)
     ax.set_ylim(ys.min() - pad, ys.max() + pad)
     ax.set_aspect("equal")
@@ -60,6 +77,7 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     ax.set_ylabel("y (m)", fontsize=9)
     ax.tick_params(labelsize=8)
     ax.set_title(f"{title}\n{subtitle}", fontsize=11, loc="left")
+    ax.legend(fontsize=7, loc="lower left", ncol=3, framealpha=0.9)
 
     (trail,) = ax.plot([], [], "-", color=ACCENT, lw=1.6, zorder=4)
     (refdot,) = ax.plot([], [], "o", color=MUTED, ms=5, zorder=4)
@@ -74,8 +92,22 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
 
     # --- lower strip: altitude and bank ------------------------------------
     # NED: z is down, so altitude is -z.
+    gate_alt = float(-np.mean(gates[:, 2]))
+    ax2.axhspan(gate_alt - half, gate_alt + half, color=GOOD, alpha=0.10, zorder=0)
+    ax2.axhline(gate_alt + half, color=GOOD, lw=0.8, ls=":", zorder=1)
+    ax2.axhline(gate_alt - half, color=GOOD, lw=0.8, ls=":", zorder=1)
+    for c in report:
+        if not c.crossed:
+            continue
+        ax2.axvline(t[c.step], color=GOOD if c.passed else BAD, lw=1.0,
+                    alpha=0.65, zorder=1)
+        ax2.plot([t[c.step]], [-pos[c.step, 2]], "o",
+                 color=GOOD if c.passed else BAD, ms=4, zorder=6)
     ax2.plot(t, -ref[:, 2], "-", color=MUTED, lw=1.0, label="reference altitude")
     ax2.plot(t, -pos[:, 2], "-", color=ACCENT, lw=1.3, label="altitude (m)")
+    lo_a = min(gate_alt - half, float((-pos[:, 2]).min())) - 0.05
+    hi_a = max(gate_alt + half, float((-pos[:, 2]).max())) + 0.05
+    ax2.set_ylim(lo_a, hi_a)
     ax2.set_ylabel("altitude (m)", fontsize=8, color=ACCENT)
     ax2.tick_params(axis="y", labelcolor=ACCENT)
     ax3 = ax2.twinx()
@@ -88,13 +120,13 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     ax2.grid(alpha=0.25, lw=0.4)
     ax2.set_xlabel("time (s)", fontsize=9)
     ax2.tick_params(labelsize=8)
-    lines = ax2.get_lines()[:2] + ax3.get_lines()[:1]
+    ax2.plot([], [], "-", color=GOOD, lw=0.8, ls=":", label="gate opening (±0.5 m)")
+    lines = [l for l in ax2.get_lines() if l.get_label() and not l.get_label().startswith("_")]
+    lines = lines[:3] + ax3.get_lines()[:1]
     ax2.legend(lines, [l.get_label() for l in lines],
                fontsize=7, loc="upper right", ncol=3, framealpha=0.9)
 
     lengths, az = genome[:, 0], genome[:, 1]
-
-    reached = np.zeros(len(gates), dtype=bool)
 
     writer = FFMpegWriter(fps=fps, bitrate=2400,
                           metadata={"title": title, "comment": subtitle})
@@ -110,15 +142,21 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
                 disc.center = (wx, wy)
             trail.set_data(pos[:k + 1, 0], pos[:k + 1, 1])
             refdot.set_data([ref[k][0]], [ref[k][1]])
-            # Same criterion as the rollout's gates_flown: within half a gate
-            # opening at any point so far. Latched across frames, not across
-            # gate index.
-            reached |= np.linalg.norm(gates - p, axis=1) <= half
-            for ln_g, done in zip(gate_lines, reached):
-                ln_g.set_color(GOOD if done else BAD)
+            # Colour each gate once the drone has crossed its plane, by
+            # whether it was inside the opening at that instant.
+            for c, ln_g in zip(report, gate_lines):
+                if c.crossed and k >= c.step:
+                    ln_g.set_color(GOOD if c.passed else BAD)
+                    ln_g.set_alpha(1.0)
+                else:
+                    ln_g.set_color(MUTED)
+                    ln_g.set_alpha(0.9)
             speed = np.linalg.norm(pos[k] - pos[k - 1]) / (t[k] - t[k - 1]) if k else 0.0
+            done = sum(1 for c in report if c.crossed and k >= c.step)
+            ok = sum(1 for c in report if c.crossed and k >= c.step and c.passed)
             hud.set_text(f"t {t[k]:5.2f} s   v {speed:5.2f} m/s   "
-                         f"roll {np.degrees(euler[k][0]):+6.1f}°")
+                         f"roll {np.degrees(euler[k][0]):+6.1f}°   "
+                         f"gates {ok}/{done}")
             cursor.set_data([t[k], t[k]], list(ax2.get_ylim()))
             writer.grab_frame()
     plt.close(fig)

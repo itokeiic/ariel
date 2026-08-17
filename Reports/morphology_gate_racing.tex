@@ -128,6 +128,7 @@ at matched commanded bandwidth, not geometry plus an accidental tuning
 advantage.
 
 \section{Results}
+\label{sec:results}
 
 \begin{table}[htb]
   \centering
@@ -153,17 +154,18 @@ there the narrow frame's weak pitch authority ($\alpha_\theta=\num{\PitchNarrow}
 against $\num{\RollNarrow}$ in roll) costs it.
 
 \paragraph{Correction pending (2026-08-17).} The completion test behind these
-numbers, \texttt{GateChecker}, measures lateral error in the horizontal plane
-only, so altitude is never checked and a drone that sinks below the gates still
-records passes. Re-running with completion requiring three-dimensional proximity
-to every gate lowers the $60^\circ$ column by \SIrange{8.3}{17.8}{\percent}, and
-that column then spans only \SIrange{9.926}{10.137}{\metre\per\second}---a
-\SI{2.1}{\percent} spread instead of \SI{12}{\percent}. The claims below about
-the $60^\circ$ column, including the widest frame being competitive there, do
-\emph{not} survive that correction. The $90^\circ$ and $120^\circ$ columns move
-by less than the bisection tolerance and stand, so the corner-sharpness trend
-between them is unaffected. Details in
-\texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
+numbers checks lateral error in the horizontal plane only, so altitude is never
+checked. Scored correctly---offset from the gate centre \emph{within the gate
+plane, at the crossing}, vertical component included---every speed above is an
+upper bound: the best body reaches \SI{10.164}{\metre\per\second} at $60^\circ$
+rather than \num{12.172} (\SI{-16.5}{\percent}), \num{8.367} at $90^\circ$
+(\SI{-2.5}{\percent}) and \num{6.648} at $120^\circ$ (\SI{-6.1}{\percent}). The
+qualitative conclusion is unchanged and in fact sharper: the optimum migrates
+monotonically toward narrower frames as corners sharpen, and at $120^\circ$ the
+narrowest frame is outright best rather than mid-field. The magnitudes in
+\S\ref{sec:results} below, and the \SI{11}{\percent} spread quoted at
+$60^\circ$---\SI{2.7}{\percent} when scored correctly---do need restating.
+Details in \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
 
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: its top four values
 differ by less than the \SI{0.0625}{\metre\per\second} bisection tolerance. The

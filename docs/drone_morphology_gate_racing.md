@@ -468,25 +468,54 @@ t=36.81° body at 12.172 m/s -- commanded altitude 1.5 m throughout:
 | altitude error (**not** checked) | 0.04 m | 0.19 m | 0.54 m | 0.75 m | **0.90 m** |
 
 The sag is a slow leak, not a transient: it grows monotonically down the course.
-It matters most where speed is highest, which is why it distorts the 60° column
-and leaves 120° untouched. Re-running the sweep with completion requiring 3-D
-proximity to every gate (`--completion flown3d`,
-`docs/data/tuned_3d_completion.csv`):
+It matters most where the drone is furthest from its reference. Three criteria
+are now named in `src/ariel/simulation/drone/gate_metrics.py`, because they
+disagree by enough to change conclusions:
 
-| turn | change in max speed | argmax |
+| criterion | test | how it fails |
 |---|---|---|
-| 60° | **-8.3% to -17.8%** | 36.81° -> 28.63°, but three bodies now tie |
-| 90° | -5.0% to +0.2% | 36.81° -> 45.00°, within bisection tolerance |
-| 120° | 0.0% at every point | unchanged |
+| `sequential` (`GateChecker`) | plane crossing + lateral error from `pos[:2]` | altitude never checked |
+| `proximity` (`--completion flown3d`) | minimum distance to the centre over the whole flight | ignores *when*, so passing near a gate without going through it counts -- easy on a slalom, where gates sit closer together than a gate is wide |
+| `strict` (`--completion strict`) | in-plane offset at the crossing, lateral **and** vertical | this is what a physical gate means |
 
-**What this invalidates.** The 60° column of §2 is not a measurement of how fast
-these airframes can fly the course; it is partly a measurement of how far they
-sink. Under the corrected criterion that column spans 9.926-10.137 m/s -- a 2.1%
-spread rather than 12% -- so the report's claim that the widest frame is
-"competitive at 60°" while the narrowest is "last" does not survive: the widest
-is last (9.926) and the narrowest second-last (9.961), separated by less than
-three bisection tolerances. **The 90° and 120° columns are essentially
-unchanged, so the corner-sharpness trend across those two survives intact.**
+At the 90° operating point the three score the same flight 15/15, 15/15 and
+**8/15**. The dominant error is lateral overshoot -- the drone flies a weave of
+amplitude 1.270 m against the reference's 0.891 m -- with about 0.15 m of
+altitude sag pushing marginal gates over the edge: gate 10 is 0.491 m out
+laterally, inside the opening, and fails only once its 0.150 m of sag counts.
+
+Re-running the full sweep under `strict`
+(`docs/data/tuned_strict_completion.csv`):
+
+| turn | published best | strict best | change |
+|---|---|---|---|
+| 60° | t=36.81°, 12.172 m/s | t=36.81°, 10.164 m/s | **-16.5%** |
+| 90° | t=36.81°, 8.578 m/s | t=36.81°, 8.367 m/s | -2.5% |
+| 120° | t=28.63°, 7.078 m/s | t=20.44°, 6.648 m/s | -6.1% |
+
+**What this invalidates, and what it does not.** Every max speed published
+before 2026-08-17 is an upper bound, and the 60° column is inflated by a sixth.
+But the *conclusion* survives, and reads more cleanly under the correct
+criterion: the optimum migrates monotonically toward narrower,
+higher-roll-authority frames as corners sharpen -- a plateau at
+t=36.81-53.19° at 60°, t=36.81° at 90°, t=20.44° at 120°, where the narrowest
+frame is outright best (6.648) and the widest last (6.183), a 7.2% spread. At
+60° both extremes are worst and the middle wins, by 2.7%.
+
+> *Correction (2026-08-17).* An earlier version of this section, written from
+> the `proximity` re-run alone, said the report's 60° claims "do not survive".
+> That was wrong: `proximity` is itself too permissive. Under `strict` the
+> narrowest frame is last at 60° and best at 120°, which is the claimed
+> direction. What does need restating is the magnitude -- 2.7% rather than 11%
+> at 60° -- and that at 120° the narrow end is first, not mid-field.
+
+**A termination bug found alongside.** The rollout broke as soon as every gate
+had been approached within half an opening -- satisfied while the drone is still
+*approaching* the final gate. The flight was cut off there, so the last gate was
+often never crossed and the two lead-out waypoints, which exist so the drone
+flies *through* the finish rather than decelerating onto it, were never flown.
+Termination now requires crossing the last gate's plane; this can only lengthen
+a flight, so it can only lower a measured speed.
 
 Not fixed here because the fix is a decision, not a patch: whether a gate is a
 plane with a circular opening, a square frame, or a slot changes what the task
@@ -1229,7 +1258,8 @@ uniform slalom unless a course set is named.
 | §5.2 position-gain scan | `docs/data/gain_scan_att12.csv`, `gain_scan_att12_low.csv` | `--gain-scan --scan-omega 2,3.78,5,7,9,12 --scan-zeta 0.7,1.19,1.6` and `--scan-omega 0.8,1.2,1.6,2.0,2.6,3.2 --scan-zeta 1.0,1.19,1.4` |
 | §5.2 attitude-bandwidth scan | `docs/data/gain_scan_att{6,24,36}.csv` | `--gain-scan --att-omega-n {6,24,36} --scan-zeta 1.0` with `--scan-omega` bracketing a 6-12x ratio |
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
-| §3.8 3-D completion re-run | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
+| §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25` |
+| §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
 | §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 

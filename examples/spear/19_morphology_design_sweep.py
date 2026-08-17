@@ -75,6 +75,7 @@ from ariel.simulation.drone.plant import (
 )
 from ariel.simulation.tasks.slalom_course import slalom_gates
 from ariel.simulation.drone.reference_morphologies import reference_morphologies
+from ariel.simulation.drone.gate_metrics import crossing_report, n_passed
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _flight_video
@@ -235,13 +236,17 @@ parser.add_argument("--video-speed", type=float, default=None,
                     help="flight speed for --video, m/s. Default: that body's "
                          "max completing speed, found by bisection.")
 parser.add_argument("--video-fps", type=int, default=50)
-parser.add_argument("--completion", choices=("sequential", "flown3d"),
+parser.add_argument("--completion", choices=("sequential", "flown3d", "strict"),
                     default="sequential",
                     help="what counts as completing the course. 'sequential' "
                          "uses GateChecker, whose lateral test is HORIZONTAL "
                          "ONLY, so altitude sag goes unpenalised. 'flown3d' "
                          "requires passing within half a gate opening of every "
-                         "gate centre in 3-D.")
+                         "gate centre in 3-D -- but ignores WHEN, so a drone "
+                         "that passes near a gate without going through it "
+                         "still counts. 'strict' requires the in-plane offset "
+                         "at the crossing itself to be inside the opening, "
+                         "which is what a physical gate means.")
 parser.add_argument("--log-npz", default=None,
                     help="with --video, also save the recorded trajectory as "
                          ".npz for offline analysis")
@@ -401,7 +406,8 @@ def rollout(propellers, course, speed, *, record: bool = False) -> dict:
                 "tracking_err": float("inf"), "completed": False,
                 "completed_flown": False, "saturation": 1.0,
                 "saturation_hi": 1.0, "saturation_lo": 1.0, "gates_flown": 0,
-                "completed_3d": False, "log": None}
+                "completed_3d": False, "completed_strict": False,
+                "gates_strict": 0, "log": None}
 
     n_steps = int(sim_time / SIM_DT)
     w_lo, w_hi = float(drone.params["minWmotor"]), float(drone.params["maxWmotor"])
@@ -418,6 +424,15 @@ def rollout(propellers, course, speed, *, record: bool = False) -> dict:
     # for the trajectory, but the video mode needs it and must fly the *same*
     # code path, not a re-implementation of it.
     log: dict[str, list] = {"t": [], "pos": [], "ref": [], "euler": [], "w": []}
+    # Incremental strict gate tracking. Recomputing crossing_report every step
+    # would be quadratic; this is one dot product per gate per step.
+    g_pos = np.asarray(course.gate_pos, dtype=float)
+    g_yaw = np.asarray(course.path_yaw[:len(g_pos)], dtype=float)
+    g_normal = np.stack([np.cos(g_yaw), np.sin(g_yaw), np.zeros_like(g_yaw)], axis=1)
+    g_half = course.gate_size / 2.0
+    prev_signed = None
+    crossed = np.zeros(len(g_pos), dtype=bool)
+    passed_strict = np.zeros(len(g_pos), dtype=bool)
     # Tracking error is accumulated only while the course is running. After
     # total_time the reference clamps at the final gate while the drone is
     # still arriving, so post-course error swamps everything: at 4 m/s the
@@ -449,6 +464,17 @@ def rollout(propellers, course, speed, *, record: bool = False) -> dict:
             steps += 1
             if t_new <= total_time:
                 course_steps += 1
+            p_now = np.asarray(drone.pos, dtype=float)
+            signed = np.einsum("ij,ij->i", p_now - g_pos, g_normal)
+            if prev_signed is not None:
+                just = (~crossed) & (prev_signed < 0.0) & (signed >= 0.0)
+                if just.any():
+                    rel = p_now - g_pos[just]
+                    in_plane = rel - (signed[just][:, None] * g_normal[just])
+                    offset = np.linalg.norm(in_plane, axis=1)
+                    passed_strict[just] = offset <= g_half
+                    crossed[just] = True
+            prev_signed = signed
             if record:
                 log["t"].append(t_new)
                 log["pos"].append(np.array(drone.pos, dtype=float).copy())
@@ -460,12 +486,16 @@ def rollout(propellers, course, speed, *, record: bool = False) -> dict:
             t, i = t_new, i + 1
             if checker.gates_passed >= checker.num_gates:
                 completed = True
-                break
-            # Terminate identically whichever rule is scored later, so both are
-            # read off the same flight rather than two runs that ended
-            # differently.
             if np.all(closest <= course.gate_size / 2.0):
                 completed_flown = True
+            # Terminate only once the drone is actually past the course, i.e.
+            # it has crossed the LAST gate's plane. The old rule broke as soon
+            # as every gate had been approached within half an opening, which
+            # is true while still approaching the final gate: the flight was
+            # cut off there, so the last gate was never scored and the lead-out
+            # waypoints -- which exist so the drone flies through the finish
+            # rather than decelerating onto it -- were never flown.
+            if crossed[-1]:
                 break
     except Exception:
         pass
@@ -487,6 +517,10 @@ def rollout(propellers, course, speed, *, record: bool = False) -> dict:
         # only (it uses pos[:2]), so a drone that sags below the gates still
         # registers passes.
         "completed_3d": bool(np.all(closest <= course.gate_size / 2.0)),
+        # Strict: at each gate-plane crossing, the in-plane offset from the
+        # centre -- lateral and vertical together -- within the half-opening.
+        "completed_strict": bool(passed_strict.all()),
+        "gates_strict": int(passed_strict.sum()),
         "log": {k: np.asarray(v) for k, v in log.items()} if record else None,
     }
 
@@ -628,7 +662,8 @@ def max_completing_speed(genome: np.ndarray, course) -> dict:
         spherical_angular_to_blueprint(genome, propsize=PROP_SIZE), convention="ned")
     tested: dict[float, dict] = {}
 
-    key = "completed_3d" if args.completion == "flown3d" else "completed_flown"
+    key = {"flown3d": "completed_3d", "strict": "completed_strict"}.get(
+        args.completion, "completed_flown")
 
     def completes(v: float) -> bool:
         if v not in tested:
@@ -938,6 +973,9 @@ def video() -> None:
     if out["log"] is None or not len(out["log"]["t"]):
         msg = "rollout produced no trajectory; nothing to render"
         raise SystemExit(msg)
+    rep = crossing_report(out["log"]["pos"], course.gate_pos,
+                          course.path_yaw[:len(course.gate_pos)], course.gate_size)
+    console.log(f"  strict: {n_passed(rep)}/{len(course.gate_pos)} gates through the opening")
     console.log(f"  flew {out['gates_flown']}/{len(course.gate_pos)} gates, "
                 f"tracking {out['tracking_err']:.3f} m, "
                 f"clip_lo {100 * out['saturation_lo']:.1f}%")
@@ -952,7 +990,7 @@ def video() -> None:
     _flight_video.render(
         path, out["log"], course, g,
         title=f"{turn:.0f}° slalom — arm half-angle {half_deg:.2f}°, {speed:.3f} m/s",
-        subtitle=(f"{out['gates_flown']}/{len(course.gate_pos)} gates · "
+        subtitle=(f"{n_passed(rep)}/{len(course.gate_pos)} gates through the opening · "
                   f"R={course.radius:.2f} m · tracking {out['tracking_err']:.2f} m · "
                   f"motor clip {100 * out['saturation_lo']:.0f}%"),
         prop_radius=PROP_RADIUS, fps=args.video_fps)
