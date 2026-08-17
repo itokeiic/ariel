@@ -15,6 +15,8 @@
 \author{ARIEL / SPEAR}
 \date{2026-08-17}
 
+\input{numbers}
+
 \begin{document}
 \maketitle
 
@@ -38,7 +40,7 @@ azimuth of its arms. With the arms at $\pm t$ and $180^\circ \pm t$ the family i
 bilaterally symmetric and spans one parameter. Propeller--propeller clearance
 bounds it: neighbouring rotors are $2L\sin t$ and $2L\cos t$ apart and both must
 exceed $2(1+\tau)r$ with a tolerance $\tau=0.1$, giving
-$t \in [20.44^\circ, 69.56^\circ]$, sampled at seven points
+$t \in [\FeasLo^\circ, \FeasHi^\circ]$, sampled at \NPoints{} points
 (Figure~\ref{fig:morph}).
 
 \begin{figure}[htb]
@@ -56,11 +58,11 @@ $t \in [20.44^\circ, 69.56^\circ]$, sampled at seven points
   \label{fig:morph}
 \end{figure}
 
-Roll authority varies by a factor of \num{2.6} across the family, from
-\num{313.3} at the narrow end to \num{121.3} at the wide end. It is deliberately
-inertia-normalised: raw torque authority gives the \emph{opposite} ordering,
-since widening the frame lengthens the lever arms
-(\SIrange{1.735}{3.896}{\newton\metre}) but raises inertia faster.
+Roll authority varies by a factor of \num{\RollRatio} across the family, from
+\num{\RollNarrow} at the narrow end to \num{\RollWide} at the wide end. It is
+deliberately inertia-normalised: raw torque authority gives the \emph{opposite}
+ordering, since widening the frame lengthens the lever arms
+(\SIrange{\TorqueLo}{\TorqueHi}{\newton\metre}) but raises inertia faster.
 
 \section{Courses}
 
@@ -112,6 +114,19 @@ the spread across the family is \SI{3}{\percent}. At the tuned operating point
 every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so
 the airframe binds instead.
 
+\paragraph{Why one tuning is fair across airframes.} The gains are not shared
+between bodies; the \emph{closed-loop response} is. Attitude gains are rederived
+per morphology as $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, so $I$
+cancels and every airframe is commanded to the same
+$(\omega_n,\zeta)=(\SI{24}{\radian\per\second},1)$ regardless of its inertia.
+The gain \emph{magnitudes} therefore differ between bodies, and between axes of
+one body, in proportion to the corresponding moments. This cancellation is exact
+only when the body axes are principal axes; for this family the products of
+inertia are identically zero (measured $\max|I_{ij}|=0$ for $i\neq j$, not merely
+small), because it retains both mirror planes. What is compared is thus geometry
+at matched commanded bandwidth, not geometry plus an accidental tuning
+advantage.
+
 \section{Results}
 
 \begin{table}[htb]
@@ -134,8 +149,8 @@ The mechanism is the one the authorities predict. Sharper corners demand faster
 bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
 drone has roughly a quarter of a second per corner---which rewards roll angular
 acceleration. Gentle corners flown at \SI{12}{\metre\per\second} do not, and
-there the narrow frame's weak pitch authority ($\alpha_\theta=\num{120.8}$
-against $\num{313.3}$ in roll) costs it.
+there the narrow frame's weak pitch authority ($\alpha_\theta=\num{\PitchNarrow}$
+against $\num{\RollNarrow}$ in roll) costs it.
 
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: its top four values
 differ by less than the \SI{0.0625}{\metre\per\second} bisection tolerance. The
@@ -143,23 +158,37 @@ $120^\circ$ optimum is a tie between $28.63^\circ$ and $36.81^\circ$. The
 \emph{direction} of the shift is consistent across all three columns; the exact
 argument of the maximum at $60^\circ$ and $120^\circ$ is not resolved. All runs
 use one uniform course per turn angle and one controller tuning, optimised on the
-X quad; a per-airframe tuning could move the ranking, since achievable attitude
-bandwidth depends on inertia.
+X quad. The \emph{commanded} bandwidth is identical across bodies by
+construction, but the \emph{achievable} one is not, since torque margin and
+motor saturation differ with geometry; a per-airframe tuning could therefore
+still move the ranking.
 
 \section{Implication}
 
 No single static geometry is best across the difficulty range. That is the first
 experimental support in this work for making arm geometry adjustable in flight:
 a drone that can sweep its arms could sit at the right point for the corner it is
-entering. Measured before the cascade was tuned, the same sweep reported that one
+entering. One consequence is already visible in the tuning: an airframe that
+sweeps its arms independently loses the mirror planes this family relies on,
+its products of inertia become non-zero, and the diagonal gain form above stops
+delivering the bandwidth it is asked for---measured spreads of
+\SIrange{22.4}{26.0}{\radian\per\second} against a \SI{24}{\radian\per\second}
+target for single-arm perturbations. Deriving the gains from the full inertia
+tensor restores it exactly; that comparison must be in place before morphologies
+are optimised, or the search rewards whichever body happens to receive the most
+bandwidth. Measured before the cascade was tuned, the same sweep reported that one
 airframe won everywhere---an artefact of measuring where the controller, not the
 airframe, was the limit.
 
 \section*{Provenance}
 
-Figures and table are generated from the repository by
+Figures, the results table and every number quoted inline
+(\texttt{numbers.tex}) are generated from the repository by
 \texttt{Reports/make\_figures.py}: geometry from the decoder and plant interface,
-speeds from the CSVs in \texttt{docs/data/}. The figures are \emph{not} tracked
+speeds from the CSVs in \texttt{docs/data/}. The inline numbers are generated
+because one of them drifted---the raw torque range was quoted over
+\SIrange{24}{66}{\degree}, an earlier sweep's span, rather than over the
+feasible family defined here. The figures are \emph{not} tracked
 --- this repository gitignores \texttt{*.pdf} --- so the generator must be run
 before the first build of a fresh clone. Rebuild with
 
@@ -174,6 +203,7 @@ Source data: \texttt{tuned\_60deg.csv} ($60^\circ$),
 \SI{12}{\metre\per\second} bracket cap and is not used here). Commands, the
 derivations behind every metric, and the defects fixed to make these
 measurements possible are recorded in
-\texttt{docs/drone\_morphology\_gate\_racing.md}.
+\texttt{docs/drone\_morphology\_gate\_racing.md}, whose own claims are checked
+against the code by \texttt{docs/tools/check\_doc\_claims.py} in the unit suite.
 
 \end{document}
