@@ -203,10 +203,19 @@ sharpnesses:
 | 61.37° | 129.3 | **12.172** | 8.305 | 6.691 |
 | 69.56° | 121.3 | 12.078 | 8.086 | 6.516 |
 
-**The extremes swap ends.** The narrowest frame (highest roll agility) is *last*
-at 60° -- 1.3 m/s and 11% behind -- and mid-pack at 120°. The widest frame is
-competitive at 60° and *last* at 120°. The peak migrates with sharpness: a
-plateau across 36.8-61.4° at 60°, 36.81° at 90°, and 28.63° at 120°.
+**The extremes swap ends.** ~~The narrowest frame (highest roll agility) is
+*last* at 60° -- 1.3 m/s and 11% behind -- and mid-pack at 120°. The widest
+frame is competitive at 60° and *last* at 120°. The peak migrates with
+sharpness: a plateau across 36.8-61.4° at 60°, 36.81° at 90°, and 28.63° at
+120°.~~
+
+> *Restated 2026-08-17 (§3.8).* Under the corrected gate criterion the
+> direction holds but the magnitudes and one endpoint do not. The narrowest
+> frame is last at 60° by **2.7%, not 11%**, and at 120° it is **first, not
+> mid-pack**; the widest is last at 120° by 7.1%. The peak migrates
+> 36.81-61.37° -> 36.81° -> 20.44-28.63°, and at 120° the ranking is monotone
+> in `t`. Live numbers are in `docs/data/tuned_strict_completion.csv`; the table
+> above is kept as published.
 
 The mechanism is the one §7.5 predicts. Sharper corners demand faster bank
 reversals, which rewards roll angular acceleration; gentle corners flown at
@@ -631,9 +640,11 @@ Three things this fixes and one it reveals:
 
 * **The position loop was roughly twice as stiff as it should be.** At a fixed
   12 rad/s attitude loop, retuning alone gives +32% (3.875 -> 5.125 m/s). The
-  optimum is a 6-10x separation from the inner loop; at or above it (`ratio <=
-  1.3x`) the two loops fight and the vehicle is **unflyable at any speed**, and
-  far below it (15x) the loop is too soft to correct.
+  optimum is a **6-12x** separation from the inner loop. **Below** that
+  (`ratio <= 1.3x`) the two loops fight and the vehicle is **unflyable at any
+  speed**; **far above** it (15x) the outer loop is too soft to correct.
+  (Corrected 2026-08-17: this sentence previously had both directions
+  reversed, and quoted 6-10x against §7.4's 6-12x.)
 * **The ceiling scales with the cascade** until the airframe binds: doubling
   attitude bandwidth roughly doubles achievable speed, 2.375 -> 5.125 -> 8.438.
 * **The crossover is at ~24 rad/s**, where clipping reaches 19%. Beyond it
@@ -646,6 +657,47 @@ Three things this fixes and one it reveals:
 
 Use `--att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0` for any morphology
 experiment on this task.
+
+### 5.3 How $\omega_n$ and $\zeta$ were chosen -- and what was never tested
+
+$\omega_n$ and $\zeta$ are not tuned per airframe. They are the *commanded*
+closed-loop response, from which per-body gains are derived (§7.2), so choosing
+them once is what makes airframes comparable. How each of the four numbers was
+arrived at, and on what evidence:
+
+| parameter | value | how it was chosen | evidence |
+|---|---|---|---|
+| $\omega_n^{\text{att}}$ | 24 rad/s | scanned 6, 12, 24, 36 (§5.2) | measured; a clear interior optimum -- speed rises to 24 and falls at 36 |
+| $\omega_n^{\text{pos}}$ | 2.0 rad/s | scanned 2.0, 2.6, 3.2, 4.0 at $\omega_n^{\text{att}}=24$ | measured, but **one-sided**: 2.0 is the smallest value tested and it won, so the optimum is not bracketed from below |
+| $\zeta^{\text{pos}}$ | 1.0 | scanned at $\omega_n^{\text{att}}=12$ only | measured there, **assumed** at 24 |
+| $\zeta^{\text{att}}$ | 1.0 | never scanned | **assumed**: critical damping, chosen for no overshoot, not measured |
+
+The position damping evidence, at $\omega_n^{\text{att}}=12$:
+
+| $\zeta^{\text{pos}}$ | 0.70 | 1.00 | 1.19 | 1.40 | 1.60 |
+|---|---|---|---|---|---|
+| best speed (m/s) | 4.625 | 5.125 | 5.125 | 5.125 | 4.750 |
+
+Under-damping costs 10% and heavy over-damping 7%, but the loop is **flat from
+1.0 to 1.4** -- which is why $\zeta=1$ was taken and not revisited. That
+flatness is the justification for carrying it to 24 rad/s untested; it is a
+reasonable assumption, not a measurement.
+
+Three honest gaps, in decreasing order of how much they could matter:
+
+1. **$\omega_n^{\text{pos}}$ is unbracketed below.** At $\omega_n^{\text{att}}=24$
+   the scan ran 2.0-4.0 and the minimum won. A separation wider than 12x might
+   be better still, and §5.2's claim that 15x is "too soft" comes from the
+   12 rad/s scan, not this one. Every speed in this document could be a little
+   low for that reason.
+2. **$\zeta^{\text{att}}$ was never swept.** `LeeGeometricControl` accepts
+   `zeta_att`, but the sweep exposes no flag for it, so nothing here tests
+   whether a slightly under-damped attitude loop would track the slalom's fast
+   bank reversals better.
+3. **All of it was tuned on the X quad** and applied to every morphology. That
+   is deliberate -- it is what makes the comparison about geometry (§7.2c) --
+   but it means the reported speeds are "best under one shared tuning", not
+   "best achievable per body". Open item 7.
 
 ### Objective function
 
@@ -780,6 +832,20 @@ flag nobody can safely change.
 | `--out-dir` | timestamped | Where CSVs land. |
 
 ---
+
+**Added 2026-08-17, with the video and perturbation work:**
+
+| flag | why it exists |
+|---|---|
+| `--completion {sequential,flown3d,strict}` | which gate test decides "completed" (§3.8). **Defaults to `strict`** since 2026-08-17; `sequential` reproduces pre-correction numbers and `flown3d` the first, also-flawed correction. Kept selectable so superseded results can be regenerated rather than merely asserted |
+| `--video` | render one flight to mp4. It reuses `rollout(record=True)`, so the video is the flight that is scored, not a re-simulation that might diverge |
+| `--video-half-angle` | which airframe to fly; defaults to the best body for that turn angle, read from the committed sweep |
+| `--video-speed` | flight speed; defaults to that body's max completing speed by bisection. Setting it above the limit is how the gate misses in §3.8 were first seen |
+| `--video-fps` | frame rate. The renderer subsamples the 200 Hz integration to this, and always keeps the final step -- dropping it hid the last gate pass |
+| `--log-npz` | save the recorded trajectory for offline analysis; how the per-gate altitude table in §3.8 was produced |
+| `--perturbation-sweep` | max completing speed for each canonical single-arm perturbation (`reference_morphologies`), the flight counterpart to the inertia table in §7.2c |
+| `--asym-deg` | perturb arm 0's azimuth, breaking bilateral symmetry. Exercises the case where diagonal and matrix gains diverge (§7.2c) |
+| `--matrix-gains` | derive attitude gains from the full inertia tensor rather than its diagonal (§7.2c) |
 
 ## 7. Variables and metrics: what they mean and where they come from
 
@@ -1260,7 +1326,7 @@ uniform slalom unless a course set is named.
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25` |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
-| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
+| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 
 **Checking this document.** `docs/tools/check_doc_claims.py` verifies the parts
@@ -1332,7 +1398,16 @@ Two conventions worth knowing when reading the CSVs:
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
    across the family. If the spread jumps, morphology optimisation on this stack
    is really a co-design problem. *(Answered 2026-08-16: it does -- 2-5x.)*
-8. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
+8. **The gate-pass criterion (§3.8) -- decide what a gate is.** `GateChecker`
+   ignores altitude and is shared with
+   `src/ariel/ec/drone/evaluators/lee_tune_evaluator.py`, so the EA scores gates
+   the same wrong way. `--completion strict` is available and is now the
+   default in the sweep, but nothing is fixed at source, and fixing it means
+   deciding whether a gate is a slot, a circular opening, or a square frame --
+   a task-design choice, not a patch. Until then every pre-2026-08-17 speed in
+   this repository is an upper bound.
+
+9. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
    upstream defects were fixed, what remained was that the position loop's
    bandwidth had never been set relative to the attitude loop it sits outside
    (§5.2, §7.4). Retuning took the X quad from 3.875 to 8.438 m/s. Use

@@ -237,7 +237,7 @@ parser.add_argument("--video-speed", type=float, default=None,
                          "max completing speed, found by bisection.")
 parser.add_argument("--video-fps", type=int, default=50)
 parser.add_argument("--completion", choices=("sequential", "flown3d", "strict"),
-                    default="sequential",
+                    default="strict",
                     help="what counts as completing the course. 'sequential' "
                          "uses GateChecker, whose lateral test is HORIZONTAL "
                          "ONLY, so altitude sag goes unpenalised. 'flown3d' "
