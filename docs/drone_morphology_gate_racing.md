@@ -912,7 +912,8 @@ $\pm15^\circ$ of arm elevation leaves the products of inertia at exactly zero,
 which is why the swept family is principal to begin with.
 
 Regenerate with `uv run --no-sync python docs/tools/principal_axes_table.py`,
-which rewrites `docs/data/principal_axes.csv`.
+which rewrites `docs/data/principal_axes.csv` and
+`docs/data/principal_axes_sensitivity.csv`.
 `tests/unit/test_docs/test_principal_axes_table.py` pins the committed CSV
 against the generator and asserts the markdown above is the table it emits, so a
 change to the inertia or decoder path fails the suite instead of silently
@@ -1170,6 +1171,24 @@ uniform slalom unless a course set is named.
 | §5.2 attitude-bandwidth scan | `docs/data/gain_scan_att{6,24,36}.csv` | `--gain-scan --att-omega-n {6,24,36} --scan-zeta 1.0` with `--scan-omega` bracketing a 6-12x ratio |
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
+
+**Checking this document.** `docs/tools/check_doc_claims.py` verifies the parts
+of the prose that are mechanically checkable against the repository -- cited
+paths and line numbers, CLI flags, identifiers, and markdown that renders as
+something other than it looks. It exists because prose drifts from code
+silently: re-reading does not catch a renamed function or a citation to a file
+that never existed, since the same reasoning that wrote the sentence finds it
+plausible. Every check runs in the unit suite
+(`tests/unit/test_docs/test_doc_claims.py`), so this is enforced rather than
+merely available; run it directly with
+
+```
+uv run --no-sync python docs/tools/check_doc_claims.py docs/drone_morphology_gate_racing.md
+```
+
+The rendering lint applies to every document under `docs/`. The claim checks are
+opted into per document, because the older Sphinx pages use bare filenames as
+prose and would report findings that are not defects.
 
 Two conventions worth knowing when reading the CSVs:
 
