@@ -30,6 +30,13 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     pos, ref, euler, t = log["pos"], log["ref"], log["euler"], log["t"]
     stride = max(1, int(round((1.0 / fps) / (t[1] - t[0])))) if len(t) > 1 else 1
     idx = np.arange(0, len(t), stride)
+    # The flight now terminates ON the final gate crossing, so the last step is
+    # rarely a multiple of the stride and subsampling would drop it -- the last
+    # gate would never be seen turning green even though it was passed. Always
+    # render the final step, then hold it so the finished course is readable.
+    if idx[-1] != len(t) - 1:
+        idx = np.append(idx, len(t) - 1)
+    idx = np.append(idx, [len(t) - 1] * int(0.8 * fps))
 
     gates, gate_yaw = course.gate_pos, course.path_yaw[:len(course.gate_pos)]
     half = course.gate_size / 2.0
