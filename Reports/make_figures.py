@@ -63,8 +63,13 @@ def feasible_range(arm_length: float = ARM_L) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------- figure 1
-def figure_morphologies(angles: np.ndarray) -> None:
-    fig, axes = plt.subplots(1, len(angles), figsize=(13.6, 2.5))
+def figure_morphologies(angles: np.ndarray, ncols: int = 3) -> None:
+    """One panel per airframe, at most `ncols` per row so the titles stay legible."""
+    nrows = int(np.ceil(len(angles) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.0 * ncols, 3.3 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+    for ax in axes[len(angles):]:
+        ax.axis("off")
     for ax, t in zip(axes, angles):
         az = np.array([t, np.pi - t, np.pi + t, -t])
         for k, a in enumerate(az):
@@ -80,8 +85,8 @@ def figure_morphologies(angles: np.ndarray) -> None:
         ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
         for sp in ax.spines.values():
             sp.set_color("#cbd5e0")
-        ax.set_title(rf"$t={np.degrees(t):.1f}^\circ$" "\n"
-                     rf"$\alpha_\phi={ar:.0f}$, $\alpha_\theta={ap:.0f}$", fontsize=8)
+        ax.set_title(rf"$t={np.degrees(t):.2f}^\circ$" "\n"
+                     rf"$\alpha_\phi={ar:.1f}$,  $\alpha_\theta={ap:.1f}$", fontsize=11)
     fig.tight_layout()
     fig.savefig(OUT / "morphologies.pdf", bbox_inches="tight")
     plt.close(fig)
