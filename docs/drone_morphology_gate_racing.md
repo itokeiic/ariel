@@ -677,7 +677,7 @@ flag nobody can safely change.
 
 | flag | default | why it exists |
 |---|---|---|
-| `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§8 item 7). |
+| `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§8 item 8). |
 | `--max-accel` | 5.0 | Commanded-acceleration clamp. The library default is below what an aggressive course demands (21 m/s^2) and far below what the airframe delivers (50), so while it binds **every morphology is limited by the same constant** and no sweep can see geometry. Use 40. |
 | `--fixed-gains` | off | Disables `auto_scale_gains`, so one controller flies every body. This is the co-design evidence: it widens the morphology spread 2-5x and makes the ordering monotone in roll agility (§2). |
 | `--pos-gain` / `--vel-gain` | 14.3 / 9.0 | Position and velocity gains, inherited from example 17. Exposed during the tracking investigation; 7x the position gain moved tracking by 10%, which is how gain tuning was ruled out as the cause of the lag. |
@@ -758,14 +758,12 @@ $$K_\text{rot} = I\,\omega_n^2, \qquad K_\text{angvel} = 2\zeta I\,\omega_n$$
 (the code fixes $\zeta=1$, writing the second as $2I\omega_n$). Substituting
 both into the closed-loop equation:
 
-$$I\ddot{\theta} + \underbrace{2\zeta I\omega_n}_{K_\text{angvel}}\dot{\theta}
-+ \underbrace{I\omega_n^2}_{K_\text{rot}}\theta = 0$$
+$$I\ddot{\theta} + \underbrace{2\zeta I\omega_n}_{K_\text{angvel}}\dot{\theta} + \underbrace{I\omega_n^2}_{K_\text{rot}}\theta = 0$$
 
 Every term now carries a factor of $I$, so dividing through by $I$ (which is
 strictly positive) removes it entirely:
 
-$$\frac{I}{I}\ddot{\theta} + \frac{2\zeta I\omega_n}{I}\dot{\theta}
-+ \frac{I\omega_n^2}{I}\theta = 0
+$$\frac{I}{I}\ddot{\theta} + \frac{2\zeta I\omega_n}{I}\dot{\theta} + \frac{I\omega_n^2}{I}\theta = 0
 \qquad\Longrightarrow\qquad
 \ddot{\theta} + 2\zeta\omega_n\dot{\theta} + \omega_n^2\theta = 0$$
 
@@ -799,6 +797,83 @@ $K_\text{rot}=0.3$, $K_\text{angvel}=0.05$:
 Note the fixed-gain column is not simply "the narrow frame is better": it gets a
 higher bandwidth *and* becomes overdamped, so its response is stiffer but
 sluggish. That competition is what produces the argmax flip at 120° in §2.
+
+### 7.2b From three scalars to the 6-DOF law
+
+§7.2 treats one axis at a time, with scalar $K_\text{rot}$ and $K_\text{angvel}$.
+The implementation is the full attitude law on $SO(3)$, where the errors are
+3-vectors and the gains are vectors applied elementwise. The two views connect
+as follows.
+
+**What the controller actually computes.** From the current rotation $R$ and the
+desired $R_d$ (`compute_body_torque` in
+`src/ariel/simulation/drone/controllers/lee_control/base_lee_controller.py`):
+
+$$e_R = \tfrac{1}{2}\left(R^\top R_d - (R^\top R_d)^\top\right)^{\vee},
+\qquad
+e_\Omega = \Omega - R^\top R_d\,\Omega_d,
+\qquad
+M = -K_R \odot e_R - K_\Omega \odot e_\Omega + \Omega\times I\Omega$$
+
+where $(\cdot)^\vee$ is the inverse of the skew map and $\odot$ is elementwise
+multiplication. $e_R$ is an attitude error expressed as a 3-vector in the body
+frame, so it needs no small-angle assumption to be defined -- that is the point
+of the geometric formulation.
+
+**Why elementwise gains are diagonal matrices.** Writing
+$K_R = \operatorname{diag}(k_{R,1},k_{R,2},k_{R,3})$, the elementwise product is
+the matrix product $K_R e_R$. Nothing in the code ever forms an off-diagonal
+gain, so the control is three independent single-axis laws sharing one error
+vector.
+
+**Why the scalar analysis is recovered.** Rigid-body rotation in the body frame
+is
+
+$$I\dot{\Omega} + \Omega\times I\Omega = M$$
+
+The $+\Omega\times I\Omega$ term in the control law is there to cancel the same
+term in the plant, leaving $I\dot{\Omega} = -K_R e_R - K_\Omega e_\Omega$. For
+small attitude errors, $R^\top R_d \approx \mathbb{1} + \widehat{\delta\theta}$
+gives $e_R \approx -\delta\theta$ and $e_\Omega \approx -\dot{\delta\theta}$, so
+
+$$I\,\ddot{\delta\theta} + K_\Omega\,\dot{\delta\theta} + K_R\,\delta\theta = 0$$
+
+If $I$ is diagonal, this is **three uncoupled copies of §7.2**, one per axis:
+
+$$I_{ii}\,\ddot{\delta\theta}_i + K_{\Omega,i}\,\dot{\delta\theta}_i + K_{R,i}\,\delta\theta_i = 0
+\qquad\Longrightarrow\qquad
+\omega_{n,i}=\sqrt{K_{R,i}/I_{ii}},\quad
+\zeta_i=\frac{K_{\Omega,i}}{2\sqrt{K_{R,i}I_{ii}}}$$
+
+`auto_scale_gains` sets $K_R = \operatorname{diag}(I)\,\omega_n^2$ and
+$K_\Omega = 2\zeta\operatorname{diag}(I)\,\omega_n$ elementwise, so the
+cancellation of §7.2 happens **independently on each axis** and all three land on
+the same $\omega_n$ and $\zeta$. That is why a single pair of numbers describes
+the attitude response of an airframe whose three axes have quite different
+inertias.
+
+**Three caveats this hides**, in increasing order of importance here:
+
+1. *Large errors.* $\lVert e_R\rVert$ saturates (it is bounded by 1), so the
+   effective proportional gain falls away from hover. The second-order reading is
+   local; the $SO(3)$ law remains valid.
+2. *Off-diagonal inertia.* `auto_scale_gains` takes `np.diag(quad.params["IB"])`,
+   discarding $I_{xy}, I_{xz}, I_{yz}$, which `DroneConfiguration` does compute.
+   For the bilaterally symmetric family swept here they are identically zero
+   (measured: `max|off-diag| = 0.00e+00` for every body), so the decoupling is
+   exact. For an asymmetric morphology it is not, and the axes are coupled
+   through $I$ while the gains assume they are not.
+3. *The gyroscopic term is cancelled but never simulated.* The control law adds
+   $+\Omega\times I\Omega$ to cancel a term the reduced plant does not have:
+   `dynamics_params` integrates $\dot{\Omega} = I^{-1}M$ with no
+   $\Omega\times I\Omega$ (`d_p = Mx`, `d_q = My`, `d_r = Mz`). So on this plant
+   the compensation is not a cancellation but an **injected torque**. It is small
+   for the bodies swept here -- at a hard reversal rate of
+   $\Omega=(6,3,1)$ rad/s it is 0.012-0.051 N·m against 1.7-3.9 N·m of available
+   roll torque, i.e. under 3% -- and it vanishes exactly at the X quad where
+   $I_{xx}=I_{yy}$. It would not be negligible for a strongly asymmetric or
+   fast-spinning body, and it is a second instance of the controller and plant
+   disagreeing about the model (§3.2 is the first).
 
 ### 7.3 The position loop: $m$ cancels entirely
 
@@ -972,14 +1047,21 @@ Two conventions worth knowing when reading the CSVs:
    cylinders with each other; nothing stops a rotor intersecting the core. The
    EA's `inner_boundary_radius = 0.055` permits it. The sweep checks
    `L ≥ core_radius + 1.1·prop_radius` itself.
-4. **Repair's contract changes for morphing bodies**: collision-free at `q = 0`
+4. **The controller cancels a gyroscopic term the plant does not have** (§7.2b).
+   The attitude law adds $+\Omega\times I\Omega$; `dynamics_params` integrates
+   $\dot{\Omega}=I^{-1}M$ without it, so the term is injected rather than
+   cancelled. Under 3% of available torque for the symmetric bodies swept here,
+   and exactly zero at the X quad, but it grows with asymmetry and rate. Fixed
+   for free by the normal-aware plant work (item 1), which restores the full
+   Euler equation.
+5. **Repair's contract changes for morphing bodies**: collision-free at `q = 0`
    guarantees nothing across a joint envelope.
-5. **The task is a cliff** at fixed speed (§2) -- nine operating points from 2.0
+6. **The task is a cliff** at fixed speed (§2) -- nine operating points from 2.0
    to 3.8 m/s scored every body identically, and a 5% speed increase collapsed
    them all. Resolved by the max-speed objective (`--max-speed-sweep`), which is
    continuous by construction. Keep this in mind before designing any new
    fixed-speed experiment on this task.
-6. **Co-design.** `--fixed-gains` (§2) showed the controller was hiding most of
+7. **Co-design.** `--fixed-gains` (§2) showed the controller was hiding most of
    the morphology effect, so body and controller should be optimised jointly.
    Nothing in the EA does this yet. See §5.1 for the two parameters to put in
    the genome and why they are not settable today.
@@ -990,7 +1072,7 @@ Two conventions worth knowing when reading the CSVs:
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
    across the family. If the spread jumps, morphology optimisation on this stack
    is really a co-design problem. *(Answered 2026-08-16: it does -- 2-5x.)*
-7. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
+8. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
    upstream defects were fixed, what remained was that the position loop's
    bandwidth had never been set relative to the attitude loop it sits outside
    (§5.2, §7.4). Retuning took the X quad from 3.875 to 8.438 m/s. Use
