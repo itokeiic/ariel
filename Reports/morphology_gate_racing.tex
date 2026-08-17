@@ -1,0 +1,177 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+
+\sisetup{detect-all}
+
+\title{Arm azimuth and corner sharpness in quadrotor gate racing}
+\author{ARIEL / SPEAR}
+\date{2026-08-17}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A quadrotor's four arms are swept through the full range of azimuths that keeps
+its propellers clear of one another, and each resulting airframe is scored by the
+fastest speed at which it still completes a slalom. Three corner sharpnesses are
+flown. No single geometry is best across them: the frame with the highest roll
+agility is last on the gentlest course and mid-field on the sharpest, while the
+widest frame is competitive on the gentlest and last on the sharpest. The effect
+is visible only once the controller cascade is tuned so that the airframe, rather
+than the control loop, is the binding constraint.
+\end{abstract}
+
+\section{Airframes}
+
+Every body is the same quadrotor---\SI{0.829}{\kilo\gram}, \SI{5}{inch}
+propellers ($r=\SI{0.0635}{\metre}$), \SI{0.20}{\metre} arms, thrust-to-weight
+\num{5.24}, matching the SPEAR reference airframe---differing only in the
+azimuth of its arms. With the arms at $\pm t$ and $180^\circ \pm t$ the family is
+bilaterally symmetric and spans one parameter. Propeller--propeller clearance
+bounds it: neighbouring rotors are $2L\sin t$ and $2L\cos t$ apart and both must
+exceed $2(1+\tau)r$ with a tolerance $\tau=0.1$, giving
+$t \in [20.44^\circ, 69.56^\circ]$, sampled at seven points
+(Figure~\ref{fig:morph}).
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=\textwidth]{figures/morphologies.pdf}
+  \caption{The seven airframes, drawn to scale; the arrow marks the direction of
+  travel and the blue disc the \SI{0.05}{\metre} body. Left to right the frame
+  stretches fore-and-aft (an H-frame) through the classic X quad at $45^\circ$
+  to laterally stretched. Beneath each, the roll and pitch angular-acceleration
+  authorities $\alpha_\phi$, $\alpha_\theta$ in \si{\radian\per\second\squared}
+  per newton of thrust, defined as the row norms of $I^{-1}B_M$. Note that
+  $t$ and $90^\circ-t$ are the same shape rotated: their authorities swap. What
+  breaks the symmetry is the task, which weaves laterally and therefore loads
+  roll.}
+  \label{fig:morph}
+\end{figure}
+
+Roll authority varies by a factor of \num{2.6} across the family, from
+\num{313.3} at the narrow end to \num{121.3} at the wide end. It is deliberately
+inertia-normalised: raw torque authority gives the \emph{opposite} ordering,
+since widening the frame lengthens the lever arms
+(\SIrange{1.735}{3.896}{\newton\metre}) but raises inertia faster.
+
+\section{Courses}
+
+Difficulty is one number, the turn angle $\theta$ demanded at each gate, at fixed
+leg length $s=\SI{2.4}{\metre}$ (Figure~\ref{fig:courses}). Consecutive legs run
+at $\pm\theta/2$ to the course axis, so
+\begin{equation}
+  d = s\cos(\theta/2), \qquad
+  A = \tfrac{s}{2}\sin(\theta/2), \qquad
+  R = \frac{s}{2\sin(\theta/2)}, \qquad
+  a_{\mathrm{lat}} = \frac{v^2}{R},
+\end{equation}
+for gate spacing, lateral amplitude, corner radius and the lateral acceleration
+demanded at speed $v$. Holding $s$ fixed rather than $d$ is what makes $R$ fall
+monotonically with $\theta$: at fixed spacing a sharper turn also lengthens the
+legs, and the corner ends up \emph{wider}.
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=0.92\textwidth]{figures/courses.pdf}
+  \caption{The three courses. Red bars are the fifteen scored gates
+  (\SI{1.0}{\metre} opening), grey the two lead-out waypoints that let the drone
+  fly \emph{through} the finish rather than stop on it, and the green dot the
+  spawn. Gate planes face along the local direction of travel, which is what the
+  pass detector requires.}
+  \label{fig:courses}
+\end{figure}
+
+\section{Scoring}
+
+Each airframe is scored by the fastest speed at which it still completes the
+course, located by bisection. Fixed-speed scoring was abandoned: across nine
+operating points from \SIrange{2.0}{3.8}{\metre\per\second} every airframe scored
+identically, and a \SI{5}{\percent} increase collapsed them all. Maximum
+completing speed is continuous by construction, needs no operating point to be
+calibrated, and at a body's own limit the question ``did it finish'' is
+unambiguous. Bisection is valid because completion is monotone in speed; the
+assumption is checked on every run and held in all cases reported here.
+
+Two conditions matter for the numbers below. Feedforward of the reference
+velocity and acceleration is enabled, and the controller cascade is tuned so the
+position loop sits well below the attitude loop
+($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$,
+$\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the
+inherited tuning the loops were separated by only a factor of \num{3.2}, motor
+saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the
+binding constraint---in that regime the same airframe wins on every course and
+the spread across the family is \SI{3}{\percent}. At the tuned operating point
+every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so
+the airframe binds instead.
+
+\section{Results}
+
+\begin{table}[htb]
+  \centering
+  \caption{Maximum completing speed (\si{\metre\per\second}) by arm half-angle
+  and corner sharpness. Bold marks the best in each column. Roll authority
+  $\alpha_\phi$ is in \si{\radian\per\second\squared} per newton.}
+  \label{tab:results}
+  \input{results_table.tex}
+\end{table}
+
+The extremes swap ends. The narrowest frame, with the highest roll authority, is
+\emph{last} at $60^\circ$---\SI{1.3}{\metre\per\second} and \SI{11}{\percent}
+behind---and mid-field at $120^\circ$. The widest frame is competitive at
+$60^\circ$ and last at $120^\circ$. The optimum migrates accordingly: a plateau
+across \SIrange{36.8}{61.4}{\degree} at $60^\circ$, $36.81^\circ$ at $90^\circ$,
+and $28.63^\circ$ at $120^\circ$.
+
+The mechanism is the one the authorities predict. Sharper corners demand faster
+bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
+drone has roughly a quarter of a second per corner---which rewards roll angular
+acceleration. Gentle corners flown at \SI{12}{\metre\per\second} do not, and
+there the narrow frame's weak pitch authority ($\alpha_\theta=\num{120.8}$
+against $\num{313.3}$ in roll) costs it.
+
+\paragraph{Limits.} The $60^\circ$ plateau is at resolution: its top four values
+differ by less than the \SI{0.0625}{\metre\per\second} bisection tolerance. The
+$120^\circ$ optimum is a tie between $28.63^\circ$ and $36.81^\circ$. The
+\emph{direction} of the shift is consistent across all three columns; the exact
+argument of the maximum at $60^\circ$ and $120^\circ$ is not resolved. All runs
+use one uniform course per turn angle and one controller tuning, optimised on the
+X quad; a per-airframe tuning could move the ranking, since achievable attitude
+bandwidth depends on inertia.
+
+\section{Implication}
+
+No single static geometry is best across the difficulty range. That is the first
+experimental support in this work for making arm geometry adjustable in flight:
+a drone that can sweep its arms could sit at the right point for the corner it is
+entering. Measured before the cascade was tuned, the same sweep reported that one
+airframe won everywhere---an artefact of measuring where the controller, not the
+airframe, was the limit.
+
+\section*{Provenance}
+
+Figures and table are generated from the repository by
+\texttt{Reports/make\_figures.py}: geometry from the decoder and plant interface,
+speeds from the CSVs in \texttt{docs/data/}. Rebuild with
+
+\begin{quote}\ttfamily\small
+uv run --no-sync python Reports/make\_figures.py \\
+latexmk -pdf Reports/morphology\_gate\_racing.tex
+\end{quote}
+
+Source data: \texttt{tuned\_60deg.csv} ($60^\circ$),
+\texttt{tuned\_90deg.csv} ($90^\circ$), \texttt{tuned\_60\_120deg.csv}
+($120^\circ$ column; its $60^\circ$ column is censored at a
+\SI{12}{\metre\per\second} bracket cap and is not used here). Commands, the
+derivations behind every metric, and the defects fixed to make these
+measurements possible are recorded in
+\texttt{docs/drone\_morphology\_gate\_racing.md}.
+
+\end{document}
