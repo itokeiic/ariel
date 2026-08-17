@@ -947,6 +947,83 @@ bandwidth, confounding geometry with tuning exactly as `auto_scale_gains` at
 fixed bandwidth confounds it the other way.
 
 
+#### Finding the principal axes -- and why the controller does not
+
+The principal axes are the **eigenvectors of $I$**. Because $I$ is real and
+symmetric, the spectral theorem guarantees they always exist, are real, and are
+mutually orthogonal, so *every* rigid body has them; the only question is whether
+they coincide with the frame you chose:
+
+$$I = V\Lambda V^\top,\qquad V^\top I V = \Lambda =
+\operatorname{diag}(I_1,I_2,I_3)$$
+
+with the columns of $V$ the principal axes written in body coordinates.
+`np.linalg.eigvalsh` / `eigh` (the symmetric solver) is the practical route. For
+the in-plane pair there is also the closed form -- Mohr's circle --
+
+$$\tan 2\theta = \frac{2I_{xy}}{I_{xx} - I_{yy}},$$
+
+and one shortcut worth knowing, which is what §7.2c actually uses: **a mirror
+plane forces the products of inertia involving its normal to vanish**. That is
+how the swept family is shown to be principal without computing anything.
+
+| body | principal moments $I_1,I_2,I_3$ (kg m^2) | misalignment |
+|---|---|---|
+| symmetric X quad (swept family) | 0.00177, 0.00178, 0.00351 | 0.00 deg |
+| arm 0 azimuth +30 deg | 0.00134, 0.00220, 0.00351 | 14.63 deg |
+| arm 0 lengthened to 0.26 m | 0.00179, 0.00241, 0.00416 | 44.49 deg |
+| arm 0 elevated 15 deg (out of plane) | 0.00177, 0.00180, 0.00348 | 39.54 deg |
+
+Misalignment is $\theta$ folded into $[0,45^\circ]$, since relabelling which
+principal axis is called $x$ is not a physical rotation.
+
+**The controller computes none of this.** $K_R=\omega_n^2 I$ is
+*basis-independent*:
+
+$$I^{-1}K_R = I^{-1}(\omega_n^2 I) = \omega_n^2\mathbb{1}$$
+
+for any symmetric positive-definite $I$. Rotating into the principal frame,
+scaling each axis by its own moment and rotating back gives
+$V(\omega_n^2\Lambda)V^\top = \omega_n^2 I$ -- the same matrix. The
+eigendecomposition is real, and it cancels out of the answer (measured
+$\max|I^{-1}K_R - \omega_n^2\mathbb{1}| = 1.1e-13$ across all four bodies).
+
+Three reasons to prefer that over adopting the principal frame:
+
+1. The rotors, the allocation matrix and the state estimate all live in the body
+   frame. Using the principal frame means rotating $e_R$, $e_\Omega$, the output
+   torque **and** $B$ into it and back out.
+2. **For a morphing airframe $V$ is time-varying.** Moving one arm
+   $30^\circ$ rotates the principal frame $14.63^\circ$. A control frame that
+   turns with the morphology introduces a $\dot V$ term that the present
+   formulation simply does not have.
+3. **The principal *direction* is ill-conditioned near degeneracy, and this
+   airframe sits there** -- see below.
+
+$I_{xx}\approx I_{yy}$ to within $0.6\%$ ($I_{xx}-I_{yy} = -1.10\mathrm{e}{-}05$),
+so Mohr's denominator is tiny and almost any coupling dominates it. Perturbing
+$I_{xy}$ alone, leaving everything else fixed:
+
+| $I_{xy}$ | misalignment of principal axes | diagonal-gain bandwidth |
+|---|---|---|
+| 0.0e+00 | 0.0 deg | 24.00 |
+| 1.0e-06 | 5.1 deg | 23.99 - 24.01 |
+| 1.0e-05 | 30.6 deg | 23.93 - 24.07 |
+| 1.0e-04 | 43.4 deg | 23.35 - 24.71 |
+| 3.1e-04 | 44.5 deg | 22.14 - 26.42 |
+
+A coupling of $10^{-5}$ -- far too small to matter dynamically, costing $0.3\%$
+of bandwidth -- already swings the principal axes $30^\circ$. The orientation of
+the principal frame is a poor thing to build a controller on: it moves violently
+under perturbations that barely move the principal moments or the closed-loop
+response. Note also that lengthening an arm at $45^\circ$ leaves
+$I_{xx}-I_{yy}$ *unchanged* -- it loads both axes equally -- while growing
+$I_{xy}$, which is why that body reaches a near-maximal $44.49^\circ$.
+
+$K_R=\omega_n^2 I$ needs none of these decisions, which is the argument for it
+under evolving morphology.
+
+
 ### 7.3 The position loop: $m$ cancels entirely
 
 The outer loop commands an *acceleration*,

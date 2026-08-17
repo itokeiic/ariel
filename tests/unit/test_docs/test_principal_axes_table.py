@@ -25,11 +25,12 @@ sys.path.insert(0, str(REPO / "docs" / "tools"))
 import principal_axes_table as pat  # noqa: E402
 
 CSV = REPO / "docs" / "data" / "principal_axes.csv"
+CSV_SENS = REPO / "docs" / "data" / "principal_axes_sensitivity.csv"
 DOC = REPO / "docs" / "drone_morphology_gate_racing.md"
 
 
-def _committed() -> list[dict]:
-    with CSV.open() as fh:
+def _committed(path: Path = CSV) -> list[dict]:
+    with path.open() as fh:
         return list(csv.DictReader(fh))
 
 
@@ -39,15 +40,46 @@ def test_regenerated_matches_committed_csv() -> None:
     assert [r["body"] for r in fresh] == [r["body"] for r in committed]
     for f, c in zip(fresh, committed):
         for key in ("max_off_diagonal", "diag_wn_min", "diag_wn_max",
-                    "matrix_wn_min", "matrix_wn_max"):
+                    "matrix_wn_min", "matrix_wn_max", "I1", "I2", "I3",
+                    "misalignment_deg"):
             assert float(c[key]) == pytest.approx(f[key], rel=1e-6, abs=1e-12), (
                 f"{f['body']}: {key} drifted from the committed CSV -- "
                 f"rerun docs/tools/principal_axes_table.py and update the doc")
 
 
-def test_markdown_table_is_present_in_the_doc() -> None:
-    """The rendered table in the doc is the one the generator emits."""
-    assert pat.markdown(pat.rows()).strip() in DOC.read_text()
+def test_sensitivity_regenerated_matches_committed_csv() -> None:
+    """The Ixy-perturbation sweep behind the conditioning argument still holds."""
+    fresh, committed = pat.sensitivity_rows(), _committed(CSV_SENS)
+    assert len(fresh) == len(committed)
+    for f, c in zip(fresh, committed):
+        for key in f:
+            assert float(c[key]) == pytest.approx(f[key], rel=1e-6, abs=1e-12), (
+                f"I_xy={f['I_xy']}: {key} drifted -- rerun the generator")
+
+
+def test_markdown_tables_are_present_in_the_doc() -> None:
+    """Every rendered table in section 7.2c is the one the generator emits."""
+    doc, rows = DOC.read_text(), pat.rows()
+    for name, table in (
+        ("bandwidth", pat.markdown(rows)),
+        ("principal moments", pat.markdown_principal(rows)),
+        ("Ixy sensitivity", pat.markdown_sensitivity(pat.sensitivity_rows())),
+    ):
+        assert table.strip() in doc, f"{name} table in the doc is stale"
+
+
+def test_misalignment_is_ill_conditioned_but_the_dynamics_are_not() -> None:
+    """The claim the conditioning argument rests on, checked directly.
+
+    A coupling small enough to be dynamically negligible still swings the
+    principal axes across most of their range. That asymmetry is the reason the
+    controller uses K_R = wn^2 I rather than adopting the principal frame.
+    """
+    small = next(r for r in pat.sensitivity_rows() if r["I_xy"] == 1e-5)
+    bandwidth_shift = max(abs(small["diag_wn_min"] - pat.WN),
+                          abs(small["diag_wn_max"] - pat.WN)) / pat.WN
+    assert bandwidth_shift < 0.01, "expected a dynamically negligible coupling"
+    assert small["misalignment_deg"] > 25.0, "expected a large axis swing"
 
 
 def test_matrix_gains_recover_the_target_on_every_body() -> None:

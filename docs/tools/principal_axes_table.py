@@ -32,6 +32,7 @@ from ariel.simulation.drone.drone_configuration import DroneConfiguration
 
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "docs" / "data" / "principal_axes.csv"
+OUT_SENS = REPO / "docs" / "data" / "principal_axes_sensitivity.csv"
 
 # Matches the sweep: SPEAR-matched quad, 5" props, 0.20 m arms, 24 rad/s target.
 WN, HALF, L, PAYLOAD, PROP_SIZE = 24.0, np.pi / 4, 0.20, 0.667, 5
@@ -57,6 +58,19 @@ def bandwidth(I: np.ndarray, *, matrix_gains: bool) -> np.ndarray:
     return np.sqrt(np.sort(np.real(np.linalg.eigvals(np.linalg.solve(I, K_R)))))
 
 
+def misalignment_deg(I: np.ndarray) -> float:
+    """Rotation of the in-plane principal axes away from the body x/y axes.
+
+    Mohr's circle: tan(2 theta) = 2 Ixy / (Ixx - Iyy). The raw theta carries a
+    90 deg labelling ambiguity -- swapping which principal axis is called "x"
+    is not a physical rotation -- so it is folded into [0, 45] deg. 0 means the
+    body axes are already principal; 45 deg is the most misaligned they can be.
+    """
+    theta = 0.5 * np.degrees(np.arctan2(2.0 * I[0, 1], I[0, 0] - I[1, 1]))
+    folded = theta % 90.0
+    return 45.0 - abs(45.0 - folded)
+
+
 def bodies() -> dict[str, np.ndarray]:
     """One-arm perturbations of the X quad, one degree of freedom each.
 
@@ -78,11 +92,15 @@ def rows() -> list[dict]:
     for name, I in bodies().items():
         d = bandwidth(I, matrix_gains=False)
         m = bandwidth(I, matrix_gains=True)
+        principal = np.linalg.eigvalsh(I)
         out.append({
             "body": name,
             "max_off_diagonal": float(np.max(np.abs(I - np.diag(np.diag(I))))),
             "diag_wn_min": float(d[0]), "diag_wn_max": float(d[-1]),
             "matrix_wn_min": float(m[0]), "matrix_wn_max": float(m[-1]),
+            "I1": float(principal[0]), "I2": float(principal[1]),
+            "I3": float(principal[2]),
+            "misalignment_deg": misalignment_deg(I),
         })
     return out
 
@@ -103,6 +121,46 @@ def markdown(rs: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def sensitivity_rows(couplings=(0.0, 1e-6, 1e-5, 1e-4, 3.1e-4)) -> list[dict]:
+    """How far the principal axes swing when a product of inertia is introduced.
+
+    Perturbs Ixy of the symmetric X quad and nothing else. The point is the
+    conditioning: this airframe has Ixx approximately Iyy, so the denominator of
+    Mohr's formula is tiny and a coupling far too small to matter dynamically
+    swings the principal DIRECTION most of its available range.
+    """
+    I0 = bodies()["symmetric X quad (swept family)"]
+    out = []
+    for c in couplings:
+        I = I0.copy()
+        I[0, 1] = I[1, 0] = c
+        wn = bandwidth(I, matrix_gains=False)
+        out.append({
+            "I_xy": float(c),
+            "misalignment_deg": misalignment_deg(I),
+            "diag_wn_min": float(wn[0]), "diag_wn_max": float(wn[-1]),
+        })
+    return out
+
+
+def markdown_principal(rs: list[dict]) -> str:
+    lines = ["| body | principal moments $I_1,I_2,I_3$ (kg m^2) | misalignment |",
+             "|---|---|---|"]
+    for r in rs:
+        lines.append(f"| {r['body']} | {r['I1']:.5f}, {r['I2']:.5f}, {r['I3']:.5f} "
+                     f"| {r['misalignment_deg']:.2f} deg |")
+    return "\n".join(lines) + "\n"
+
+
+def markdown_sensitivity(rs: list[dict]) -> str:
+    lines = ["| $I_{xy}$ | misalignment of principal axes | diagonal-gain bandwidth |",
+             "|---|---|---|"]
+    for r in rs:
+        lines.append(f"| {r['I_xy']:.1e} | {r['misalignment_deg']:.1f} deg | "
+                     f"{_span(r['diag_wn_min'], r['diag_wn_max'])} |")
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
     rs = rows()
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -110,5 +168,12 @@ if __name__ == "__main__":
         w = csv.DictWriter(fh, fieldnames=list(rs[0]), lineterminator="\n")
         w.writeheader()
         w.writerows(rs)
+    sens = sensitivity_rows()
+    with OUT_SENS.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(sens[0]), lineterminator="\n")
+        w.writeheader()
+        w.writerows(sens)
     print(markdown(rs))
-    print(f"wrote {OUT.relative_to(REPO)}")
+    print(markdown_principal(rs))
+    print(markdown_sensitivity(sens))
+    print(f"wrote {OUT.relative_to(REPO)} and {OUT_SENS.relative_to(REPO)}")
