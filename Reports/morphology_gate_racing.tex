@@ -23,12 +23,15 @@
 \begin{abstract}
 A quadrotor's four arms are swept through the full range of azimuths that keeps
 its propellers clear of one another, and each resulting airframe is scored by the
-fastest speed at which it still completes a slalom. Three corner sharpnesses are
-flown. No single geometry is best across them: the frame with the highest roll
-agility is last on the gentlest course and mid-field on the sharpest, while the
-widest frame is competitive on the gentlest and last on the sharpest. The effect
-is visible only once the controller cascade is tuned so that the airframe, rather
-than the control loop, is the binding constraint.
+fastest speed at which it still completes a slalom, where completing means
+passing inside every gate opening. Three corner sharpnesses are flown. No single
+geometry is best across them: the optimum migrates monotonically toward narrower,
+higher-roll-authority frames as corners sharpen, and the penalty for being wrong
+grows with them---from \SI{\SpreadSixty}{\percent} across the family at
+$60^\circ$ to \SI{\SpreadOneTwenty}{\percent} at $120^\circ$, where the
+narrowest frame is outright best and the widest last. The effect is visible only
+once the controller cascade is tuned so that the airframe, rather than the
+control loop, is the binding constraint.
 \end{abstract}
 
 \section{Airframes}
@@ -97,9 +100,12 @@ Each airframe is scored by the fastest speed at which it still completes the
 course, located by bisection. Fixed-speed scoring was abandoned: across nine
 operating points from \SIrange{2.0}{3.8}{\metre\per\second} every airframe scored
 identically, and a \SI{5}{\percent} increase collapsed them all. Maximum
-completing speed is continuous by construction, needs no operating point to be
-calibrated, and at a body's own limit the question ``did it finish'' is
-unambiguous. Bisection is valid because completion is monotone in speed; the
+completing speed is continuous by construction and needs no operating point to be
+calibrated. ``Finished'' has to be defined carefully, though: a gate counts as
+passed only if the drone's offset from the gate centre, measured \emph{in the
+gate plane at the crossing} and including its vertical component, is inside the
+half-opening. Two weaker tests were in use earlier and both inflate the result;
+see the note below. Bisection is valid because completion is monotone in speed; the
 assumption is checked on every run and held in all cases reported here.
 
 Two conditions matter for the numbers below. Feedforward of the reference
@@ -139,39 +145,54 @@ advantage.
   \input{results_table.tex}
 \end{table}
 
-The extremes swap ends. The narrowest frame, with the highest roll authority, is
-\emph{last} at $60^\circ$---\SI{1.3}{\metre\per\second} and \SI{11}{\percent}
-behind---and mid-field at $120^\circ$. The widest frame is competitive at
-$60^\circ$ and last at $120^\circ$. The optimum migrates accordingly: a plateau
-across \SIrange{36.8}{61.4}{\degree} at $60^\circ$, $36.81^\circ$ at $90^\circ$,
-and $28.63^\circ$ at $120^\circ$.
+The narrow end swaps ends. At $60^\circ$ the narrowest frame, which has the
+highest roll authority, is \emph{last} (\SI{\NarrowSixty}{\percent}); at
+$120^\circ$ it is \emph{first}, and the widest frame is last
+(\SI{\WideOneTwenty}{\percent}). The optimum migrates monotonically with corner
+sharpness: a broad plateau across $\ArgmaxSixty^\circ$ at $60^\circ$
+(\NTiesSixty{} bodies within tolerance), a single peak at
+$\ArgmaxNinety^\circ$ at $90^\circ$, and $\ArgmaxOneTwenty^\circ$ at
+$120^\circ$. At $120^\circ$ the ranking is monotone in $t$ from best to worst,
+with no inversions.
+
+So does the size of the effect. The spread across the family grows with corner
+sharpness---\SI{\SpreadSixty}{\percent} at $60^\circ$,
+\SI{\SpreadNinety}{\percent} at $90^\circ$, \SI{\SpreadOneTwenty}{\percent} at
+$120^\circ$---so geometry matters progressively more as the task gets harder,
+which is the same conclusion read a second way.
 
 The mechanism is the one the authorities predict. Sharper corners demand faster
 bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
 drone has roughly a quarter of a second per corner---which rewards roll angular
-acceleration. Gentle corners flown at \SI{12}{\metre\per\second} do not, and
-there the narrow frame's weak pitch authority ($\alpha_\theta=\num{\PitchNarrow}$
-against $\num{\RollNarrow}$ in roll) costs it.
+acceleration. Gentle corners flown at \SI{\BestSixty}{\metre\per\second} do not,
+and there the narrow frame's weak pitch authority
+($\alpha_\theta=\num{\PitchNarrow}$ against $\num{\RollNarrow}$ in roll) costs
+it.
 
-\paragraph{Correction pending (2026-08-17).} The completion test behind these
-numbers checks lateral error in the horizontal plane only, so altitude is never
-checked. Scored correctly---offset from the gate centre \emph{within the gate
-plane, at the crossing}, vertical component included---every speed above is an
-upper bound: the best body reaches \SI{10.164}{\metre\per\second} at $60^\circ$
-rather than \num{12.172} (\SI{-16.5}{\percent}), \num{8.367} at $90^\circ$
-(\SI{-2.5}{\percent}) and \num{6.648} at $120^\circ$ (\SI{-6.1}{\percent}). The
-qualitative conclusion is unchanged and in fact sharper: the optimum migrates
-monotonically toward narrower frames as corners sharpen, and at $120^\circ$ the
-narrowest frame is outright best rather than mid-field. The magnitudes in
-\S\ref{sec:results} below, and the \SI{11}{\percent} spread quoted at
-$60^\circ$---\SI{2.7}{\percent} when scored correctly---do need restating.
-Details in \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
+\paragraph{Revised 2026-08-17.} Every number here is a re-measurement. The
+completion test used previously, \texttt{GateChecker}, computes lateral error
+from the horizontal components of position alone, so altitude was never checked
+and a drone sagging below the gates still scored passes; a second test, minimum
+distance to the gate centre over the whole flight, ignores \emph{when} that
+minimum occurred and so counts gates the drone passed beside rather than
+through. At the $90^\circ$ operating point the three criteria score the same
+flight 15/15, 15/15 and 8/15. Under the criterion defined above the best body
+reaches \SI{\BestSixty}{\metre\per\second} at $60^\circ$ against
+\SI{\PubBestSixty}{\metre\per\second} previously (\SI{-16.5}{\percent}),
+\SI{\BestNinety}{\metre\per\second} at $90^\circ$ (\SI{-2.5}{\percent}) and
+\SI{\BestOneTwenty}{\metre\per\second} at $120^\circ$ (\SI{-6.1}{\percent}).
+The conclusion is unchanged in direction and cleaner in form: previously the
+$120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
+monotone ranking behind it. Full account in
+\texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
 
-\paragraph{Limits.} The $60^\circ$ plateau is at resolution: its top four values
-differ by less than the \SI{0.0625}{\metre\per\second} bisection tolerance. The
-$120^\circ$ optimum is a tie between $28.63^\circ$ and $36.81^\circ$. The
+\paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
+bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the
+best, so that column establishes only that both extremes are worse than the
+middle. At $120^\circ$ the top \NTiesOneTwenty{} are likewise tied, though there
+the whole ranking is monotone in $t$, which the tie does not disturb. The
 \emph{direction} of the shift is consistent across all three columns; the exact
-argument of the maximum at $60^\circ$ and $120^\circ$ is not resolved. All runs
+argument of the maximum at $60^\circ$ is not resolved. All runs
 use one uniform course per turn angle and one controller tuning, optimised on the
 X quad. The \emph{commanded} bandwidth is identical across bodies by
 construction, but the \emph{achievable} one is not, since torque margin and
@@ -212,10 +233,11 @@ uv run --no-sync python Reports/make\_figures.py \\
 latexmk -pdf Reports/morphology\_gate\_racing.tex
 \end{quote}
 
-Source data: \texttt{tuned\_60deg.csv} ($60^\circ$),
-\texttt{tuned\_90deg.csv} ($90^\circ$), \texttt{tuned\_60\_120deg.csv}
-($120^\circ$ column; its $60^\circ$ column is censored at a
-\SI{12}{\metre\per\second} bracket cap and is not used here). Commands, the
+Source data: \texttt{tuned\_strict\_completion.csv}, all three turn angles under
+the strict gate criterion. The superseded sequential-criterion runs
+(\texttt{tuned\_60deg.csv}, \texttt{tuned\_90deg.csv},
+\texttt{tuned\_60\_120deg.csv}) are retained for comparison but no longer feed
+this report. Commands, the
 derivations behind every metric, and the defects fixed to make these
 measurements possible are recorded in
 \texttt{docs/drone\_morphology\_gate\_racing.md}, whose own claims are checked
