@@ -34,6 +34,52 @@ once the controller cascade is tuned so that the airframe, rather than the
 control loop, is the binding constraint.
 \end{abstract}
 
+
+\section*{Notation}
+
+Two symbols are reused in the drone-racing literature and are kept distinct
+here: $t$ is always the arm half-angle, never time, and $L$ is always arm
+length, never path length.
+
+\begin{center}
+\small
+\begin{tabular}{@{}l l l@{}}
+  \toprule
+  \multicolumn{3}{@{}l}{\textit{Airframe}} \\
+  $t$ & arm half-angle, the swept parameter & \si{\degree} \\
+  $L$ & arm length, hub to rotor centre & \si{\metre} \\
+  $r$ & propeller radius & \si{\metre} \\
+  $\tau$ & propeller clearance tolerance, \num{0.1} & --- \\
+  $I$ & body inertia tensor about the centre of gravity & \si{\kilo\gram\metre\squared} \\
+  $I_{ij}$ & its $(i,j)$ entry; $i \neq j$ are the products of inertia & \si{\kilo\gram\metre\squared} \\
+  $B_M$ & moment allocation matrix, column $i$ the moment per newton of rotor $i$ & \si{\metre} \\
+  $\alpha_\phi,\ \alpha_\theta$ & roll and pitch angular-acceleration authority,
+    the row norms of $I^{-1}B_M$ & \si{\radian\per\second\squared\per\newton} \\
+  \midrule
+  \multicolumn{3}{@{}l}{\textit{Course}} \\
+  $\theta$ & turn angle demanded at each gate: the difficulty knob & \si{\degree} \\
+  $s$ & leg length, gate to gate along the path; held fixed at \SI{2.4}{\metre} & \si{\metre} \\
+  $d$ & gate spacing along the course axis & \si{\metre} \\
+  $A$ & lateral amplitude of the weave & \si{\metre} \\
+  $R$ & corner radius & \si{\metre} \\
+  $a_{\mathrm{lat}}$ & lateral acceleration demanded at speed $v$ & \si{\metre\per\second\squared} \\
+  $\ell$ & total path length, lead-out included & \si{\metre} \\
+  $v$ & nominal speed; see the note on what it measures & \si{\metre\per\second} \\
+  \midrule
+  \multicolumn{3}{@{}l}{\textit{Trajectory and controller}} \\
+  $P(u)$ & the reference B-spline: position as a function of its parameter & \si{\metre} \\
+  $u$ & spline parameter; the curve advances at constant $du/dt$ while cruising & --- \\
+  $T_{\text{startup}}$ & duration of the ramp from rest, \SI{3}{\second} & \si{\second} \\
+  $T_{\text{total}}$ & time allotted for the whole course & \si{\second} \\
+  $\omega_n$ & commanded closed-loop natural frequency (bandwidth) & \si{\radian\per\second} \\
+  $\zeta$ & commanded closed-loop damping ratio; \num{1} is critical damping & --- \\
+  $\Omega$ & body angular rate & \si{\radian\per\second} \\
+  $K_R,\ K_\Omega$ & attitude proportional and rate gains, $K_R=\omega_n^2 I$ and
+    $K_\Omega = 2\zeta\omega_n I$ & --- \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
 \section{Airframes}
 
 Every body is the same quadrotor---\SI{0.829}{\kilo\gram}, \SI{5}{inch}
@@ -189,7 +235,7 @@ monotone ranking behind it. Full account in
 \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
 
 \paragraph{What the speeds are, and are not.} \texttt{--speed} sets
-$t_{\text{total}} = t_{\text{startup}} + L/v$ and the spline advances at
+$T_{\text{total}} = T_{\text{startup}} + \ell/v$ and the spline advances at
 constant $du/dt$, \emph{not} at constant speed. Because $|dP/du|$ is larger near
 a clamped spline's ends than in its middle, the reference is slower at the gates
 than the nominal figure---by \num{1.84} at $60^\circ$, \num{2.14} at $90^\circ$

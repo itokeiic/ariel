@@ -53,3 +53,40 @@ def test_report_quotes_no_literal_numbers_for_generated_quantities() -> None:
                  "10.164", "8.367", "6.648", "12.172", "8.578", "7.078"}
     stale = sorted(v for v in generated if v in tex)
     assert not stale, f"literal values in the prose, use the macros instead: {stale}"
+
+
+def test_every_symbol_in_the_report_is_defined_in_its_notation_section() -> None:
+    """No mathematical symbol appears in the body without a definition.
+
+    Cheap to satisfy and easy to lose: a symbol introduced in a later revision
+    reads fine to whoever added it and is opaque to everyone else.
+    """
+    import re  # noqa: PLC0415
+
+    tex = TEX.read_text()
+    body = tex[tex.index(r"\begin{document}"):]
+    i, j = body.index(r"\section*{Notation}"), body.index(r"\section{Airframes}")
+    notation, rest = body[i:j], body[:i] + body[j:]
+
+    units = {"circ", "per", "metre", "second", "percent", "degree", "kilo", "gram",
+             "newton", "radian", "squared", "frac", "tfrac", "qquad", "cos", "sin",
+             "times", "in", "approx", "leq", "neq", "pm", "max", "mathrm", "text",
+             "emph", "textbf", "num", "SI", "SIrange", "S", "ref", "label", "texttt"}
+
+    def symbols(txt: str) -> set[str]:
+        segs = re.findall(r"\$([^$]+)\$", txt) + re.findall(
+            r"\\begin\{equation\}(.*?)\\end\{equation\}", txt, re.S)
+        out: set[str] = set()
+        for seg in segs:
+            seg = re.sub(r"\\(SI|SIrange|num|text|mathrm|emph|textbf)\{[^{}]*\}", " ", seg)
+            for tok in re.findall(
+                    r"\\[a-zA-Z]+|[A-Za-z]_\{[^{}]+\}|[A-Za-z]_\\[a-zA-Z]+|[A-Za-z]", seg):
+                if tok.lstrip("\\") not in units:
+                    out.add(tok)
+        return out
+
+    # Generated value macros carry their own meaning; they are not notation.
+    generated = set(re.findall(r"\\newcommand\{\\(\w+)\}", (REPO / "Reports" / "numbers.tex").read_text()))
+    used = {t for t in symbols(rest) if t.lstrip("\\") not in generated}
+    undefined = sorted(used - symbols(notation))
+    assert not undefined, f"symbols used but never defined: {undefined}"
