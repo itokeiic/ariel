@@ -53,8 +53,10 @@ length, never path length.
   $I$ & body inertia tensor about the centre of gravity & \si{\kilo\gram\metre\squared} \\
   $I_{ij}$ & its $(i,j)$ entry; $i \neq j$ are the products of inertia & \si{\kilo\gram\metre\squared} \\
   $B_M$ & moment allocation matrix, column $i$ the moment per newton of rotor $i$ & \si{\metre} \\
-  $\alpha_\phi,\ \alpha_\theta$ & roll and pitch angular-acceleration authority,
-    the row norms of $I^{-1}B_M$ & \si{\radian\per\second\squared\per\newton} \\
+  $\alpha_\phi,\ \alpha_\theta,\ \alpha_\psi$ & roll, pitch and yaw
+    angular-acceleration authority, the row norms of $I^{-1}B_M$ &
+    \si{\radian\per\second\squared\per\newton} \\
+  $\psi$ & heading (yaw), commanded to follow the path tangent & \si{\degree} \\
   \midrule
   \multicolumn{3}{@{}l}{\textit{Course}} \\
   $\theta$ & turn angle demanded at each gate: the difficulty knob & \si{\degree} \\
@@ -96,7 +98,10 @@ $t \in [\FeasLo^\circ, \FeasHi^\circ]$, sampled at \NPoints{} points
   \centering
   \includegraphics[width=0.78\textwidth]{figures/morphologies.pdf}
   \caption{The seven airframes, drawn to scale; the arrow marks the direction of
-  travel and the blue disc the \SI{0.05}{\metre} body. In reading order the frame
+  travel and the blue disc the \SI{0.05}{\metre} body. The drone is commanded to
+  point along its path---heading tracks the trajectory tangent, as a
+  camera-guided racer must to see the next gate---so the weave is flown by
+  banking, which is why roll authority is the discriminating quantity. In reading order the frame
   stretches fore-and-aft (an H-frame) through the classic X quad at $45^\circ$
   to laterally stretched. Beneath each, the roll and pitch angular-acceleration
   authorities $\alpha_\phi$, $\alpha_\theta$ in \si{\radian\per\second\squared}
@@ -233,6 +238,21 @@ The conclusion is unchanged in direction and cleaner in form: previously the
 $120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
 monotone ranking behind it. Full account in
 \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
+
+\paragraph{Heading, and the limits of the roll argument.} Yaw is commanded to
+follow the trajectory tangent, which is both what the gate geometry describes
+and what a vision-guided racer must do. The airframe cannot fully deliver it:
+for coplanar rotors yaw comes only from rotor drag torque, never from a thrust
+lever arm, so yaw authority is \SI{6.43}{\radian\per\second\squared\per\newton}
+against \SIrange{121}{313}{} in roll---weaker by \numrange{19}{49}. On the
+$90^\circ$ course the drone achieves \SI{34}{\degree} of yaw amplitude against
+\SI{60}{\degree} commanded and crabs a mean \SI{20}{\degree}. Two consequences.
+The comparison is unaffected: yaw authority is \emph{identical} across the
+family---the azimuth sweep rotates rotors in-plane and leaves the drag-torque
+sum untouched---so the lag is common-mode. But the mechanism above is
+``mostly roll'' rather than ``roll'': with that much sideslip some lateral
+acceleration is served by pitch. Roll still dominates, $\pm78^\circ$ against
+$\pm28^\circ$.
 
 \paragraph{What the speeds are, and are not.} \texttt{--speed} sets
 $T_{\text{total}} = T_{\text{startup}} + \ell/v$ and the spline advances at
