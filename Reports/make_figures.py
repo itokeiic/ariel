@@ -21,6 +21,7 @@ from ariel.body_phenotypes.drone.backends import blueprint_to_propellers
 from ariel.body_phenotypes.drone.decoders import spherical_angular_to_blueprint
 from ariel.simulation.drone.drone_configuration import DroneConfiguration
 from ariel.simulation.drone.plant import RotorGeometry, moment_allocation
+from ariel.simulation.drone.gate_metrics import crossing_report, n_passed
 from ariel.simulation.tasks.slalom_course import slalom_gates
 
 REPO = Path(__file__).resolve().parents[1]
@@ -122,13 +123,89 @@ def figure_courses(turns=(60.0, 90.0, 120.0)) -> None:
         ax.plot(c.starting_pos[0], c.starting_pos[1], "o", color=GOOD, ms=5, zorder=3)
         ax.set_aspect("equal"); ax.grid(alpha=0.25, lw=0.4)
         ax.set_ylabel("y (m)", fontsize=8)
+        ax.set_xlabel("x (m)", fontsize=8)
         ax.tick_params(labelsize=7)
+        ax.margins(x=0.01)
         ax.set_title(rf"$\theta={turn:.0f}^\circ$:  $R={c.radius:.2f}$ m,  "
                      rf"spacing ${c.spacing:.2f}$ m,  amplitude $\pm{c.amplitude:.2f}$ m",
                      fontsize=8.5, loc="left")
     axes[-1].set_xlabel("x (m)", fontsize=8)
     fig.tight_layout()
     fig.savefig(OUT / "courses.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- figure 3
+LOGS = REPO / "docs" / "data" / "flight_logs"
+STARTUP_TIME = 3.0
+
+
+def _cross_track(pos: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """Distance from each flown point to the nearest point on the reference.
+
+    Nearest-point, not same-time: the interest is how far the drone strayed from
+    the *path*, independent of whether it was early or late along it.
+    """
+    return np.array([np.min(np.linalg.norm(ref - p, axis=1)) for p in pos])
+
+
+def flight_stats() -> list[dict]:
+    out = []
+    for turn in (60, 90, 120):
+        d = np.load(LOGS / f"slalom_{turn}deg.npz")
+        pos, ref = d["pos"].astype(float), d["ref"].astype(float)
+        rep = crossing_report(pos, d["gate_pos"].astype(float),
+                              d["gate_yaw"].astype(float), float(d["gate_size"]))
+        # Exclude the startup ramp. The drone spawns start_offset = 1.0 m behind
+        # gate 0 while the spline begins AT gate 0, so t=0 contributes a 1.00 m
+        # "error" that is the initial condition, not tracking -- it swamped the
+        # maximum and read identically on all three courses.
+        cruise = d["t"].astype(float) > STARTUP_TIME
+        xt = _cross_track(pos[cruise], ref)
+        out.append({
+            "turn": turn, "d": d, "rep": rep, "pos": pos, "ref": ref,
+            "passed": n_passed(rep), "n_gates": len(rep),
+            "xt_mean": float(xt.mean()), "xt_max": float(xt.max()),
+            "offset_max": max(c.offset for c in rep if c.crossed),
+            "half_angle": float(d["half_angle_deg"]), "speed": float(d["speed"]),
+        })
+    return out
+
+
+def figure_flights(stats: list[dict]) -> None:
+    """Reference vs flown, one row per course -- the discrepancy the tables hide."""
+    # Not sharex: the courses differ in length (a 60 deg slalom runs further in
+    # x than a 120 deg one), and sharing the axis squeezes the sharpest course
+    # into half the row.
+    fig, axes = plt.subplots(len(stats), 1, figsize=(7.2, 7.4))
+    for ax, st in zip(np.atleast_1d(axes).ravel(), stats):
+        d, pos, ref = st["d"], st["pos"], st["ref"]
+        half = float(d["gate_size"]) / 2.0
+        for c, (g, yaw) in zip(st["rep"], zip(d["gate_pos"].astype(float),
+                                              d["gate_yaw"].astype(float))):
+            n = np.array([np.cos(yaw + np.pi / 2), np.sin(yaw + np.pi / 2)]) * half
+            ax.plot([g[0] - n[0], g[0] + n[0]], [g[1] - n[1], g[1] + n[1]], "-",
+                    color=(GOOD if c.passed else BAD), lw=2.6,
+                    solid_capstyle="butt", zorder=2)
+        ax.plot(ref[:, 0], ref[:, 1], "-", color="#a0aec0", lw=1.6, zorder=1,
+                label="B-spline reference")
+        ax.plot(pos[:, 0], pos[:, 1], "-", color=ACCENT, lw=1.4, zorder=3,
+                label="flown")
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.25, lw=0.4)
+        ax.set_ylabel("y (m)", fontsize=8)
+        ax.set_xlabel("x (m)", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.margins(x=0.01)
+        ax.set_title(
+            rf"$\theta={st['turn']}^\circ$, $t={st['half_angle']:.2f}^\circ$, "
+            rf"$v={st['speed']:.3f}$ m/s  —  {st['passed']}/{st['n_gates']} gates; "
+            rf"cross-track mean {st['xt_mean']:.2f} m, max {st['xt_max']:.2f} m",
+            fontsize=8.5, loc="left")
+    axes[0].legend(fontsize=7, loc="upper center", ncol=2, framealpha=0.95,
+                   bbox_to_anchor=(0.5, -0.28))
+    fig.tight_layout()
+    fig.savefig(OUT / "flights.pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -225,6 +302,8 @@ def numbers_tex(angles: np.ndarray) -> str:
         "TorqueLo": f"{tor.min():.3f}", "TorqueHi": f"{tor.max():.3f}",
         # Superseded sequential-criterion figures, quoted only in the note that
         # explains why they changed.
+        **{f"XTrack{n}": f"{st['xt_max']:.2f}"
+           for n, st in zip(("Sixty", "Ninety", "OneTwenty"), flight_stats())},
         "PubBestSixty": "12.172", "PubBestNinety": "8.578",
         "PubBestOneTwenty": "7.078",
         **speed_vals,
@@ -238,9 +317,11 @@ if __name__ == "__main__":
     angles = np.linspace(lo, hi, 7)
     figure_morphologies(angles)
     figure_courses()
+    figure_flights(flight_stats())
     (OUT.parent / "results_table.tex").write_text(results_table())
     (OUT.parent / "numbers.tex").write_text(numbers_tex(angles))
     print(f"feasible half-angle range: {np.degrees(lo):.2f}-{np.degrees(hi):.2f} deg")
     print("wrote", OUT / "morphologies.pdf", OUT / "courses.pdf",
+          OUT / "flights.pdf",
           OUT.parent / "results_table.tex", OUT.parent / "numbers.tex",
           sep="\n      ")

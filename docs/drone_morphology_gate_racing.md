@@ -1499,6 +1499,7 @@ uniform slalom unless a course set is named.
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25` |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
 | §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
+| Report Figure 3, reference vs flown | `docs/data/flight_logs/slalom_{60,90,120}deg.npz` | `--video --turn-deg {60,90,120} --video-half-angle {36.81382,36.81382,20.44145} --video-speed {10.164,8.367,6.648} --completion strict --log-npz <path>`, drawn by `Reports/make_figures.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 
 **Checking this document.** `docs/tools/check_doc_claims.py` verifies the parts

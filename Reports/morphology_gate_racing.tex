@@ -220,6 +220,10 @@ and there the narrow frame's weak pitch authority
 ($\alpha_\theta=\num{\PitchNarrow}$ against $\num{\RollNarrow}$ in roll) costs
 it.
 
+Figure~\ref{fig:flights} shows what ``completing the course'' looks like at
+these speeds: the reference is tracked only loosely, and the margin at the gate
+planes is small.
+
 \paragraph{Revised 2026-08-17.} Every \emph{speed} here is a re-measurement;
 the geometry and authority figures are computed from the decoder and are
 unaffected. The
@@ -238,6 +242,25 @@ The conclusion is unchanged in direction and cleaner in form: previously the
 $120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
 monotone ranking behind it. Full account in
 \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=\textwidth]{figures/flights.pdf}
+  \caption{Reference against reality, each course flown by its own best airframe
+  at its own limiting speed. Grey is the B-spline the controller is given; blue
+  is the path actually flown; green bars are the fifteen scored gates, all
+  passed at these operating points. The drone does not track the reference---it
+  lags in phase and \emph{overshoots} the weave, flying a wider amplitude than
+  asked, by a mean of \SIrange{0.28}{0.33}{\metre} and a maximum of
+  \SI{\XTrackNinety}{\metre}. Against a \SI{0.5}{\metre} gate half-opening that
+  is most of the margin, which is why raising the speed a little above these
+  values starts missing gates rather than degrading smoothly: the limit is set
+  by cross-track overshoot at the gate planes, not by the vehicle running out of
+  thrust. Note that gate passage is judged in the gate plane at the crossing,
+  altitude included, so a trajectory that looks close in this projection can
+  still fail.}
+  \label{fig:flights}
+\end{figure}
 
 \paragraph{Heading, and the limits of the roll argument.} Yaw is commanded to
 follow the trajectory tangent, which is both what the gate geometry describes
