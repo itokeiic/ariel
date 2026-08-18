@@ -1328,6 +1328,48 @@ the ceiling is set by $\cos\phi = 1/\text{TWR}$. For the SPEAR-matched quad
 (0.829 kg, TWR 5.24) that is 51 m/s^2 -- but see §2: the binding limit in
 practice is the *lower* motor bound, not total thrust.
 
+### 7.6b What `--speed` actually means
+
+**`--speed` is a difficulty knob, not the speed the drone flies through a
+gate.** It sets `total_time = startup_time + path_length / speed`, and two
+things separate that number from the physical gate speed:
+
+1. `path_length` is the **polyline** through the waypoints. The interpolating
+   spline must pass through every one and bows outside the straight legs
+   between them, so its arc length is slightly *longer* -- 39.4-40.0 m against
+   38.4 m here. This is a small effect and in the conservative direction.
+2. Far larger: the spline is parameterised **uniformly in $u$, not by arc
+   length**. World speed is $|dP/du|\cdot du/dt$, and on a clamped spline
+   $|dP/du|$ is much bigger near the ends than in the middle, so a constant
+   $du/dt$ starves the middle of the course -- where every gate is -- and
+   sprints the final span.
+
+Measured on the reference trajectory alone, at each course's strict-criterion
+best operating point:
+
+| course | `--speed` | polyline | spline arc | ref speed at gates (min/median/max) | peak ref speed | nominal / median |
+|---|---|---|---|---|---|---|
+| 60° | 10.164 m/s | 38.40 m | 39.40 m | 3.81 / 5.51 / 6.49 m/s | 28.9 m/s | 1.84x |
+| 90° | 8.367 m/s | 38.40 m | 39.95 m | 3.09 / 3.90 / 5.39 m/s | 28.7 m/s | 2.14x |
+| 120° | 6.648 m/s | 38.40 m | 40.01 m | 2.07 / 2.31 / 4.32 m/s | 26.7 m/s | 2.88x |
+
+So a body reported at **8.367 m/s** on the 90° course crosses its gates at
+about **3.9 m/s**, and the discrepancy grows with corner sharpness: 1.84x at
+60°, 2.88x at 120°. The peak reference speed of ~28 m/s sits in the final span,
+past where flights terminate (the last gate crossing), so it does not touch any
+result reported here -- but it is latent, and would bite anything that flew the
+full `total_time`.
+
+**What this does and does not invalidate.** Every airframe is given the
+identical reference, so the comparison between morphologies is unaffected and
+bisection stays monotone -- the quantity is a consistent ordinal difficulty
+scale. What it means is that the m/s figures in §2 must not be read as physical
+gate speeds, and that speeds are **not comparable across turn angles**: the
+60° and 120° columns are divided by different factors. Comparisons within a
+column are sound; comparisons across columns are not.
+
+Regenerate with `uv run --no-sync python docs/tools/speed_semantics.py`.
+
 ### 7.7 What a rollout measures
 
 | quantity | definition | why it is reported |
@@ -1461,7 +1503,16 @@ Two conventions worth knowing when reading the CSVs:
    a task-design choice, not a patch. Until then every pre-2026-08-17 speed in
    this repository is an upper bound.
 
-9. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
+9. **Arc-length parameterisation of the reference (§7.6b).** The spline
+   advances at constant $du/dt$, not constant speed, so the reference is 1.8-2.9x
+   slower at the gates than the nominal `--speed` and peaks near 28 m/s in the
+   final span. Nothing reported here is invalidated -- every body flies the same
+   reference, and the peak lies past where flights end -- but speeds are not
+   comparable across turn angles, and an arc-length reparameterisation would
+   make `--speed` mean what it says. Wanted before any result is quoted as a
+   physical speed.
+
+10. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
    upstream defects were fixed, what remained was that the position loop's
    bandwidth had never been set relative to the attitude loop it sits outside
    (§5.2, §7.4). Retuning took the X quad from 3.875 to 8.438 m/s. Use

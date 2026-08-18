@@ -188,6 +188,18 @@ $120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
 monotone ranking behind it. Full account in
 \texttt{docs/drone\_morphology\_gate\_racing.md}~\S3.8.
 
+\paragraph{What the speeds are, and are not.} \texttt{--speed} sets
+$t_{\text{total}} = t_{\text{startup}} + L/v$ and the spline advances at
+constant $du/dt$, \emph{not} at constant speed. Because $|dP/du|$ is larger near
+a clamped spline's ends than in its middle, the reference is slower at the gates
+than the nominal figure---by \num{1.84} at $60^\circ$, \num{2.14} at $90^\circ$
+and \num{2.88} at $120^\circ$. Every airframe flies the identical reference, so
+the comparisons within a column are unaffected and bisection stays monotone, but
+two things follow: the numbers here are an ordinal difficulty scale rather than
+physical gate speeds, and they are \textbf{not comparable across turn angles},
+since each column is divided by a different factor. The mechanism and the
+measurements are in \texttt{docs/drone\_morphology\_gate\_racing.md}~\S7.6b.
+
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
 bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the
 best, so that column establishes only that both extremes are worse than the

@@ -99,6 +99,9 @@ def test_headline_and_perturbation_tables_in_the_doc_are_current() -> None:
     assert pert.strip() in doc, (
         "section 7.2d perturbation table is stale -- rerun "
         "docs/tools/perturbation_figure.py")
+    speed = (REPO / "docs" / "data" / "speed_semantics.md").read_text()
+    assert speed.strip() in doc, (
+        "section 7.6b speed table is stale -- rerun docs/tools/speed_semantics.py")
 
 
 def test_matrix_gains_recover_the_target_on_every_body() -> None:

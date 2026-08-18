@@ -43,7 +43,15 @@ class GateCrossing:
 
 def crossing_report(positions: np.ndarray, gate_pos: np.ndarray,
                     gate_yaw: np.ndarray, gate_size: float) -> list[GateCrossing]:
-    """One entry per gate, describing the drone's first crossing of its plane."""
+    """One entry per gate, describing the drone's first crossing of its plane.
+
+    A crossing is a negative-to-non-negative transition of the signed distance
+    along the gate normal, so a trajectory that *begins* on or past a gate plane
+    never registers one and that gate reports ``crossed=False``. Flights spawn
+    behind the first gate (``start_offset``), so this does not arise in scoring;
+    it does arise when analysing the reference trajectory itself, whose first
+    control point is gate 0's centre.
+    """
     positions = np.asarray(positions, dtype=float)
     half = gate_size / 2.0
     out: list[GateCrossing] = []
