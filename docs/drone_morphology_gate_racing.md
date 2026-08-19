@@ -361,6 +361,10 @@ before this fix as invalid.**
 `Bf`/`Bm` that `get_params()` hands the controller as `mixerFM`. A canted rotor
 is therefore *allocated* as tilted and *simulated* as axial.
 
+**The full work order for fixing this -- exact code sites, what must survive
+the rewrite, and the verification plan -- is in
+[plant_thrust_direction.md](plant_thrust_direction.md).**
+
 `_guard_axial_thrust` now warns once per process (or raises under
 `ARIEL_STRICT_THRUST_NORMALS=1`) with the deviation and the fraction of thrust
 not simulated. **This is still open**: a normal-aware plant is the real fix, and
@@ -1633,7 +1637,8 @@ Two conventions worth knowing when reading the CSVs:
    simply does not use them for the dynamics, and no test pins the current
    form. Care is needed not to lose the reduced plant's motor lag and
    aerodynamic drag, and moving to `Bm` means applying the full inertia inverse
-   explicitly. Blocks any experiment on
+   explicitly -- see [plant_thrust_direction.md](plant_thrust_direction.md).
+   Blocks any experiment on
    arm elevation, motor cant, or tilted rotors — i.e. most of the interesting
    morphing directions. The intended resolution is to move the plant to
    Isaac/PhysX rather than extend the reduced ODE, since PhysX models thrust

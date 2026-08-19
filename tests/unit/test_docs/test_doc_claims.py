@@ -27,7 +27,10 @@ sys.path.insert(0, str(REPO / "docs" / "tools"))
 
 import check_doc_claims as cdc  # noqa: E402
 
-CHECKED = (REPO / "docs" / "drone_morphology_gate_racing.md",)
+CHECKED = (
+    REPO / "docs" / "drone_morphology_gate_racing.md",
+    REPO / "docs" / "plant_thrust_direction.md",
+)
 ALL_DOCS = sorted((REPO / "docs").rglob("*.md"))
 
 
