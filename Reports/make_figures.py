@@ -97,7 +97,11 @@ def figure_morphologies(angles: np.ndarray, ncols: int = 3) -> None:
                  color=INK, lw=1.1, zorder=5, length_includes_head=True)
         ar, ap = agility(float(t))
         lim = ARM_L + PROP_R * 1.25
-        ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
+        ax.set_xlim(-lim, lim)
+        # Body frame is NED as well: y right, z down, so the top-down view puts
+        # y downward on the page. Drawn the other way the airframes would be
+        # mirrored relative to the courses they fly.
+        ax.set_ylim(lim, -lim)
         ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
         for sp in ax.spines.values():
             sp.set_color("#cbd5e0")
@@ -122,6 +126,10 @@ def figure_courses(turns=(60.0, 90.0, 120.0)) -> None:
                     solid_capstyle="butt", zorder=2)
         ax.plot(c.starting_pos[0], c.starting_pos[1], "o", color=GOOD, ms=5, zorder=3)
         ax.set_aspect("equal"); ax.grid(alpha=0.25, lw=0.4)
+        # NED: z is down, so a true top-down view (looking along +z) has y
+        # running DOWN the page when x runs right. Plotting y upward would
+        # be the view from below, and would mirror the weave.
+        ax.invert_yaxis()
         ax.set_ylabel("y (m)", fontsize=8)
         ax.set_xlabel("x (m)", fontsize=8)
         ax.tick_params(labelsize=7)
@@ -193,6 +201,10 @@ def figure_flights(stats: list[dict]) -> None:
                 label="flown")
         ax.set_aspect("equal")
         ax.grid(alpha=0.25, lw=0.4)
+        # NED: z is down, so a true top-down view (looking along +z) has y
+        # running DOWN the page when x runs right. Plotting y upward would
+        # be the view from below, and would mirror the weave.
+        ax.invert_yaxis()
         ax.set_ylabel("y (m)", fontsize=8)
         ax.set_xlabel("x (m)", fontsize=8)
         ax.tick_params(labelsize=7)

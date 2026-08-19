@@ -77,7 +77,8 @@ def render(path: Path, log: dict, course, genome: np.ndarray, *,
     xs = np.concatenate([xs, course.path_pos[:, 0]])
     ys = np.concatenate([ys, course.path_pos[:, 1]])
     ax.set_xlim(xs.min() - pad, xs.max() + pad)
-    ax.set_ylim(ys.min() - pad, ys.max() + pad)
+    # NED: looking down along +z puts y downward on the page (see make_figures).
+    ax.set_ylim(ys.max() + pad, ys.min() - pad)
     ax.set_aspect("equal")
     ax.grid(alpha=0.25, lw=0.4)
     ax.set_xlabel("x (m)", fontsize=9)
