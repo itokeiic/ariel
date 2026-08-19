@@ -99,6 +99,10 @@ def test_headline_and_perturbation_tables_in_the_doc_are_current() -> None:
     assert pert.strip() in doc, (
         "section 7.2d perturbation table is stale -- rerun "
         "docs/tools/perturbation_figure.py")
+    tilt = (REPO / "docs" / "data" / "thrust_tilt_exposure.md").read_text()
+    assert tilt.strip() in doc, (
+        "section 4.1 tilt-exposure table is stale -- rerun "
+        "docs/tools/thrust_tilt_exposure.py")
     yaw = (REPO / "docs" / "data" / "yaw_authority.md").read_text()
     assert yaw.strip() in doc, (
         "section 7.5b authority table is stale -- rerun docs/tools/yaw_authority.py")
