@@ -21,17 +21,8 @@
 \maketitle
 
 \begin{abstract}
-A quadrotor's four arms are swept through the full range of azimuths that keeps
-its propellers clear of one another, and each resulting airframe is scored by the
-fastest speed at which it still completes a slalom, where completing means
-passing inside every gate opening. Three corner sharpnesses are flown. No single
-geometry is best across them: the optimum migrates monotonically toward narrower,
-higher-roll-authority frames as corners sharpen, and the penalty for being wrong
-grows with them---from \SI{\SpreadSixty}{\percent} across the family at
-$60^\circ$ to \SI{\SpreadOneTwenty}{\percent} at $120^\circ$, where the
-narrowest frame is outright best and the widest last. The effect is visible only
-once the controller cascade is tuned so that the airframe, rather than the
-control loop, is the binding constraint.
+%A quadrotor's four arms are swept through the full range of azimuths that keeps its propellers clear of one another, and each resulting airframe is scored by the fastest speed at which it still completes a slalom, where completing means passing inside every gate opening. Three corner sharpnesses are flown. No single geometry is best across them: the optimum migrates monotonically toward narrower higher-roll-authority frames as corners sharpen, and the penalty for being wrong grows with them---from \SI{\SpreadSixty}{\percent} across the family at $60^\circ$ to \SI{\SpreadOneTwenty}{\percent} at $120^\circ$, where the narrowest frame is outright best and the widest last. The effect is visible only once the controller cascade is tuned so that the airframe, rather than the control loop, is the binding constraint.
+This study supports a potential benefit of actively morphed drones. We show that certain morphologies are better suited to a given task than others. We fly a quadrotor with varying arm azimuth angles through three slalom courses, each with a different corner sharpness. The performance of a given morphology is evaluated by the maximum speed at which it can complete the course without missing a gate. The best morphology (i.e., the arm azimuth angle) depended on the corner sharpness. This justifies the need for actively morphed drones in gate-passing tasks.
 \end{abstract}
 
 
@@ -39,7 +30,8 @@ control loop, is the binding constraint.
 
 Two symbols are reused in the drone-racing literature and are kept distinct
 here: $t$ is always the arm half-angle, never time, and $L$ is always arm
-length, never path length.
+length, never path length. Since $t$ is unavailable, time is written $T$ where
+it is named, and an overdot denotes a rate of change with respect to time.
 
 \begin{center}
 \small
@@ -70,119 +62,149 @@ length, never path length.
   \midrule
   \multicolumn{3}{@{}l}{\textit{Trajectory and controller}} \\
   $P(u)$ & the reference B-spline: position as a function of its parameter & \si{\metre} \\
-  $u$ & spline parameter; the curve advances at constant $du/dt$ while cruising & --- \\
+  $u$ & spline parameter; the curve advances at constant $\dot u$ while cruising & --- \\
   $T_{\text{startup}}$ & duration of the ramp from rest, \SI{3}{\second} & \si{\second} \\
   $T_{\text{total}}$ & time allotted for the whole course & \si{\second} \\
-  $\omega_n$ & commanded closed-loop natural frequency (bandwidth) & \si{\radian\per\second} \\
+  $\omega_n$ & commanded closed-loop natural frequency (bandwidth scale) & \si{\radian\per\second} \\
+   & its $-3$\,dB bandwidth is $0.644\,\omega_n$ at $\zeta=1$ & \\
   $\zeta$ & commanded closed-loop damping ratio; \num{1} is critical damping & --- \\
   $\Omega$ & body angular rate & \si{\radian\per\second} \\
   $K_R,\ K_\Omega$ & attitude proportional and rate gains, $K_R=\omega_n^2 I$ and
     $K_\Omega = 2\zeta\omega_n I$ & --- \\
+  $m,\ g$ & total mass and gravitational acceleration & \si{\kilogram},
+    \si{\metre\per\second\squared} \\
+  $p$ & measured position & \si{\metre} \\
+  $\dot p$ & measured velocity & \si{\metre\per\second} \\
+  $p_{\rm ref}$ & the reference's position & \si{\metre} \\
+  $\dot p_{\rm ref}$ & the reference's velocity & \si{\metre\per\second} \\
+  $\ddot p_{\rm ref}$ & the reference's acceleration & \si{\metre\per\second\squared} \\
+  $a_{\rm cmd}$ & acceleration commanded by the position loop
+    (Appendix~\ref{sec:feedforward}) & \si{\metre\per\second\squared} \\
+  $F$ & commanded force, $m(a_{\rm cmd} - g)$ & \si{\newton} \\
+  $K_p,\ K_v$ & position and velocity feedback gains & --- \\
+  $x,\ y,\ z$ & body-fixed axes, $x$ forward, $y$ right, $z$ down & \si{\metre} \\
   \bottomrule
 \end{tabular}
 \end{center}
 
 \section{Airframes}
 
-Every body is the same quadrotor---\SI{0.829}{\kilo\gram}, \SI{5}{inch}
-propellers ($r=\SI{0.0635}{\metre}$), \SI{0.20}{\metre} arms, thrust-to-weight
-\num{5.24}, matching the SPEAR reference airframe---differing only in the
-azimuth of its arms. With the arms at $\pm t$ and $180^\circ \pm t$ the family is
-bilaterally symmetric and spans one parameter. Propeller--propeller clearance
-bounds it: neighbouring rotors are $2L\sin t$ and $2L\cos t$ apart and both must
-exceed $2(1+\tau)r$ with a tolerance $\tau=0.1$, giving
-$t \in [\FeasLo^\circ, \FeasHi^\circ]$, sampled at \NPoints{} points
-(Figure~\ref{fig:morph}).
-
+% Every body is the same quadrotor---\SI{0.829}{\kilo\gram}, \SI{5}{inch}
+% propellers ($r=\SI{0.0635}{\metre}$), \SI{0.20}{\metre} arms, thrust-to-weight
+% \num{5.24}, matching the SPEAR reference airframe---differing only in the
+% azimuth of its arms. With the arms at $\pm t$ and $180^\circ \pm t$ the family is
+% bilaterally symmetric and spans one parameter. Propeller--propeller clearance
+% bounds it: neighbouring rotors are $2L\sin t$ and $2L\cos t$ apart and both must
+% exceed $2(1+\tau)r$ with a tolerance $\tau=0.1$, giving
+% $t \in [\FeasLo^\circ, \FeasHi^\circ]$, sampled at \NPoints{} points
+% (Figure~\ref{fig:morph}).
+Consider a quadrotor with \SI{0.829}{\kilo\gram} mass, \SI{5}{inch} propellers ($r=\SI{0.0635}{\metre}$), \SI{0.20}{\metre} arms, and thrust-to-weight ratio of \num{5.24}. We vary the azimuth of its arms, parameterized by the half-angle $t$,  measured from the body-fixed longitudinal axis $x$. We maintain the bilaterally symmetric X configuration by placing the arms at $\pm t$ and $180^\circ \pm t$. Inter-propeller clearance is maintained by considering configurations in $t \in [\FeasLo^\circ, \FeasHi^\circ]$, sampled at \NPoints{} points (Figure~\ref{fig:morph}).
 \begin{figure}[htb]
   \centering
   \includegraphics[width=0.78\textwidth]{figures/morphologies.pdf}
-  \caption{The seven airframes, drawn to scale; the arrow marks the direction of
-  travel and the blue disc the \SI{0.05}{\metre} body. The drone is commanded to
-  point along its path---heading tracks the trajectory tangent, as a
-  camera-guided racer must to see the next gate---so the weave is flown by
-  banking, which is why roll authority is the discriminating quantity. In reading order the frame
-  stretches fore-and-aft (an H-frame) through the classic X quad at $45^\circ$
-  to laterally stretched. Beneath each, the roll and pitch angular-acceleration
-  authorities $\alpha_\phi$, $\alpha_\theta$ in \si{\radian\per\second\squared}
-  per newton of thrust, defined as the row norms of $I^{-1}B_M$. Note that
-  $t$ and $90^\circ-t$ are the same shape rotated: their authorities swap. What
-  breaks the symmetry is the task, which weaves laterally and therefore loads
-  roll.}
+  \caption{The seven airframes, drawn to scale; the arrow marks the x-axis and the direction of travel and the blue disc the \SI{0.05}{\metre} body. The drone is commanded to point along its path so the weave is flown by banking. Thus, the roll authority is the discriminating quantity. At low $t$, the frame stretches fore-and-aft. The classic X quad is at $t = 45^\circ$. At high $t$, the frame is laterally stretched. Beneath each, the roll and pitch angular-acceleration authorities $\alpha_\phi$, $\alpha_\theta$ in \si{\radian\per\second\squared} per newton of thrust, defined as the row norms of $I^{-1}B_M$. As the $t$ increases, the roll and pitch authorities swap their relative importance. The slalom, however demands roll authority.}
   \label{fig:morph}
 \end{figure}
 
-Roll authority varies by a factor of \num{\RollRatio} across the family, from
-\num{\RollNarrow} at the narrow end to \num{\RollWide} at the wide end. It is
-deliberately inertia-normalised: raw torque authority gives the \emph{opposite}
-ordering, since widening the frame lengthens the lever arms
-(\SIrange{\TorqueLo}{\TorqueHi}{\newton\metre}) but raises inertia faster.
+% Roll authority $\alpha_\phi$ varies by a factor of \num{\RollRatio} across the family, from \num{\RollNarrow} at the narrow end to \num{\RollWide} at the wide end. It is deliberately inertia-normalised: raw torque authority gives the \emph{opposite} ordering, since widening the frame lengthens the lever arms (\SIrange{\TorqueLo}{\TorqueHi}{\newton\metre}) but raises inertia faster.
+Roll authority $\alpha_\phi$ varies by a factor of \num{\RollRatio} across the studied configurations, from \num{\RollNarrow} at the narrow end to \num{\RollWide} at the wide end. The Roll Authority is deliberately inertia-normalised: raw torque authority gives the \emph{opposite} ordering, since widening the airframe lengthens the lever arms (\SIrange{\TorqueLo}{\TorqueHi}{\newton\metre}) but raises inertia faster.
 
 \section{Courses}
 
-Difficulty is one number, the turn angle $\theta$ demanded at each gate, at fixed
-leg length $s=\SI{2.4}{\metre}$ (Figure~\ref{fig:courses}). Consecutive legs run
-at $\pm\theta/2$ to the course axis, so
+% Difficulty is one number, the turn angle $\theta$ demanded at each gate, at fixed
+% leg length $s=\SI{2.4}{\metre}$ (Figure~\ref{fig:courses}). Consecutive legs run
+% at $\pm\theta/2$ to the course axis, so
+% \begin{equation}
+%   d = s\cos(\theta/2), \qquad
+%   A = \tfrac{s}{2}\sin(\theta/2), \qquad
+%   R = \frac{s}{2\sin(\theta/2)}, \qquad
+%   a_{\mathrm{lat}} = \frac{v^2}{R},
+% \end{equation}
+% for gate spacing, lateral amplitude, corner radius and the lateral acceleration
+% demanded at speed $v$. Holding $s$ fixed rather than $d$ is what makes $R$ fall
+% monotonically with $\theta$: at fixed spacing a sharper turn also lengthens the
+% legs, and the corner ends up \emph{wider}.
+
+% \begin{figure}[htb]
+%   \centering
+%   \includegraphics[width=0.92\textwidth]{figures/courses.pdf}
+%   \caption{The three courses. Red bars are the fifteen scored gates
+%   (\SI{1.0}{\metre} opening), grey the two lead-out waypoints that let the drone
+%   fly \emph{through} the finish rather than stop on it, and the green dot the
+%   spawn. Gate planes face along the local direction of travel, which is what the
+%   pass detector requires.}
+%   \label{fig:courses}
+% \end{figure}
+Difficulty is given by the turn angle $\theta$ demanded at each gate, at fixed leg length $s=\SI{2.4}{\metre}$ (Figure~\ref{fig:courses}). Consecutive legs run at $\pm\theta/2$ to the course axis, so
+
 \begin{equation}
   d = s\cos(\theta/2), \qquad
   A = \tfrac{s}{2}\sin(\theta/2), \qquad
   R = \frac{s}{2\sin(\theta/2)}, \qquad
   a_{\mathrm{lat}} = \frac{v^2}{R},
 \end{equation}
-for gate spacing, lateral amplitude, corner radius and the lateral acceleration
-demanded at speed $v$. Holding $s$ fixed rather than $d$ is what makes $R$ fall
-monotonically with $\theta$: at fixed spacing a sharper turn also lengthens the
-legs, and the corner ends up \emph{wider}.
+
+for gate spacing, lateral amplitude, corner radius, and the lateral acceleration demanded at speed $v$. Holding $s$ fixed rather than $d$ is what makes $R$ fall monotonically with $\theta$: at fixed spacing, a sharper turn also lengthens the legs, and the corner ends up \emph{wider}.
+
+
 
 \begin{figure}[htb]
+
   \centering
+
   \includegraphics[width=0.92\textwidth]{figures/courses.pdf}
-  \caption{The three courses. Red bars are the fifteen scored gates
-  (\SI{1.0}{\metre} opening), grey the two lead-out waypoints that let the drone
-  fly \emph{through} the finish rather than stop on it, and the green dot the
-  spawn. Gate planes face along the local direction of travel, which is what the
-  pass detector requires.}
+
+  \caption{The three courses. Red bars are the fifteen scored gates  (\SI{0.5}{\metre} radius), grey bars are the two lead-out waypoints that let the drone fly \emph{through} the finish rather than stop on it, and the green dots are the spawn points. Gate planes face along the local direction of travel, which is what the pass detector requires.}
+
   \label{fig:courses}
+
 \end{figure}
 
 \section{Scoring}
 
-Each airframe is scored by the fastest speed at which it still completes the
-course, located by bisection. Fixed-speed scoring was abandoned: across nine
-operating points from \SIrange{2.0}{3.8}{\metre\per\second} every airframe scored
-identically, and a \SI{5}{\percent} increase collapsed them all. Maximum
-completing speed is continuous by construction and needs no operating point to be
-calibrated. ``Finished'' has to be defined carefully, though: a gate counts as
-passed only if the drone's offset from the gate centre, measured \emph{in the
-gate plane at the crossing} and including its vertical component, is inside the
-half-opening. Two weaker tests were in use earlier and both inflate the result;
-see the note below. Bisection is valid because completion is monotone in speed; the
-assumption is checked on every run and held in all cases reported here.
+% Each airframe is scored by the fastest speed at which it still completes the
+% course, located by bisection. Fixed-speed scoring was abandoned: across nine
+% operating points from \SIrange{2.0}{3.8}{\metre\per\second} every airframe scored
+% identically, and a \SI{5}{\percent} increase collapsed them all. Maximum
+% completing speed is continuous by construction and needs no operating point to be
+% calibrated. ``Finished'' has to be defined carefully, though: a gate counts as
+% passed only if the drone's offset from the gate centre, measured \emph{in the
+% gate plane at the crossing} and including its vertical component, is inside the
+% half-opening. Two weaker tests were in use earlier and both inflate the result;
+% see the note below. Bisection is valid because completion is monotone in speed; the
+% assumption is checked on every run and held in all cases reported here.
 
-Two conditions matter for the numbers below. Feedforward of the reference
-velocity and acceleration is enabled, and the controller cascade is tuned so the
-position loop sits well below the attitude loop
-($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$,
-$\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the
-inherited tuning the loops were separated by only a factor of \num{3.2}, motor
-saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the
-binding constraint---in that regime the same airframe wins on every course and
-the spread across the family is \SI{3}{\percent}. At the tuned operating point
-every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so
-the airframe binds instead.
+% Two conditions matter for the numbers below. Feedforward of the reference
+% velocity and acceleration is enabled, and the controller cascade is tuned so the
+% position loop sits well below the attitude loop
+% ($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$,
+% $\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the
+% inherited tuning the loops were separated by only a factor of \num{3.2}, motor
+% saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the
+% binding constraint---in that regime the same airframe wins on every course and
+% the spread across the family is \SI{3}{\percent}. At the tuned operating point
+% every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so
+% the airframe binds instead.
 
-\paragraph{Why one tuning is fair across airframes.} The gains are not shared
-between bodies; the \emph{closed-loop response} is. Attitude gains are rederived
-per morphology as $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, so $I$
-cancels and every airframe is commanded to the same
-$(\omega_n,\zeta)=(\SI{24}{\radian\per\second},1)$ regardless of its inertia.
-The gain \emph{magnitudes} therefore differ between bodies, and between axes of
-one body, in proportion to the corresponding moments. This cancellation is exact
-only when the body axes are principal axes; for this family the products of
-inertia are identically zero (measured $\max|I_{ij}|=0$ for $i\neq j$, not merely
-small), because it retains both mirror planes. What is compared is thus geometry
-at matched commanded bandwidth, not geometry plus an accidental tuning
-advantage.
+% \paragraph{Why one tuning is fair across airframes.} The gains are not shared
+% between bodies; the \emph{closed-loop response} is. Attitude gains are rederived
+% per morphology as $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, so $I$
+% cancels and every airframe is commanded to the same
+% $(\omega_n,\zeta)=(\SI{24}{\radian\per\second},1)$ regardless of its inertia.
+% The gain \emph{magnitudes} therefore differ between bodies, and between axes of
+% one body, in proportion to the corresponding moments. This cancellation is exact
+% only when the body axes are principal axes; for this family the products of
+% inertia are identically zero (measured $\max|I_{ij}|=0$ for $i\neq j$, not merely
+% small), because it retains both mirror planes. What is compared is thus geometry
+% at matched commanded bandwidth, not geometry plus an accidental tuning
+% advantage.
+Each airframe is scored by the maximum speed at which it still completes the course without missing a gate. The speeds are located by bisection. A gate counts as passed only if the drone's offset from the gate centre, measured \emph{in the gate plane at the crossing} and including its vertical component, is within the gate radius of \SI{0.5}{\metre}. That offset is a Euclidean norm, so the gate is a circular opening rather than the square frame the word ``gate'' usually denotes; a square of the same half-width encloses \SI{27}{\percent} more area, all of it near the diagonals, so the criterion used here is the stricter of the two. Bisection is valid because completion is monotone in speed; the assumption is checked on every run and held in all cases reported here.
+
+Two conditions matter for the numbers below. Feedforward of the reference velocity and acceleration is enabled (c.f. section \ref{sec:feedforward}), and the controller cascade (outer position loop and inner attitude loop) is tuned so the position loop sits well below the attitude loop ($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$, $\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the inherited tuning, the loops were separated by only a factor of \num{3.2}, motor saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the active constraint. In that regime, the same airframe wins on every course, and the spread across the family is \SI{3}{\percent}. At the tuned operating point, every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so the airframe binds the performance instead.
+
+\paragraph{Why one tuning is fair across airframes.} The gains are not shared between bodies; the \emph{closed-loop response} for set point hover is. Attitude gains are rederived per morphology as $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, so $I$ cancels and every airframe is commanded to the same $(\omega_n,\zeta)=(\SI{24}{\radian\per\second},1)$ regardless of its inertia. The gain \emph{magnitudes} therefore differ between bodies, and between body axes, in proportion to the corresponding moments. This cancellation is exact only when the body axes are principal axes; for this family the products of inertia are identically zero (measured $\max|I_{ij}|=0$ for $i\neq j$, not merely small), because it retains both mirror planes. What is compared is thus geometry at matched commanded bandwidth, not geometry plus an accidental tuning advantage.
+
+
 
 \section{Results}
 \label{sec:results}
@@ -252,7 +274,7 @@ monotone ranking behind it. Full account in
   passed at these operating points. The drone does not track the reference---it
   lags in phase and \emph{overshoots} the weave, flying a wider amplitude than
   asked, by a mean of \SIrange{0.28}{0.33}{\metre} and a maximum of
-  \SI{\XTrackNinety}{\metre}. Against a \SI{0.5}{\metre} gate half-opening that
+  \SI{\XTrackNinety}{\metre}. Against the \SI{0.5}{\metre} gate radius that
   is most of the margin, which is why raising the speed a little above these
   values starts missing gates rather than degrading smoothly: the limit is set
   by cross-track overshoot at the gate planes, not by the vehicle running out of
@@ -278,16 +300,74 @@ acceleration is served by pitch. Roll still dominates, $\pm78^\circ$ against
 $\pm28^\circ$.
 
 \paragraph{What the speeds are, and are not.} \texttt{--speed} sets
-$T_{\text{total}} = T_{\text{startup}} + \ell/v$ and the spline advances at
-constant $du/dt$, \emph{not} at constant speed. Because $|dP/du|$ is larger near
-a clamped spline's ends than in its middle, the reference is slower at the gates
-than the nominal figure---by \num{1.84} at $60^\circ$, \num{2.14} at $90^\circ$
-and \num{2.88} at $120^\circ$. Every airframe flies the identical reference, so
-the comparisons within a column are unaffected and bisection stays monotone, but
-two things follow: the numbers here are an ordinal difficulty scale rather than
-physical gate speeds, and they are \textbf{not comparable across turn angles},
-since each column is divided by a different factor. The mechanism and the
-measurements are in \texttt{docs/drone\_morphology\_gate\_racing.md}~\S7.6b.
+$T_{\text{total}} = T_{\text{startup}} + \ell/v$, so $v$ is a nominal figure
+rather than a speed held anywhere on the course. The median reference speed at
+the gates is \SI{\GateSpeedSixty}{\metre\per\second} at $60^\circ$,
+\SI{\GateSpeedNinety}{\metre\per\second} at $90^\circ$ and
+\SI{\GateSpeedOneTwenty}{\metre\per\second} at $120^\circ$, against nominal
+figures of \BestSixty{}, \BestNinety{} and \BestOneTwenty{}. Two independent
+causes multiply to give that shortfall, and they meet at an intermediate
+quantity: the mean speed over the whole path, which the first carries the
+nominal figure down to and the second carries down from. The gate figure is a
+median because the crossings are spread---\SIrange{3.09}{5.39}{\metre\per\second}
+at $90^\circ$---while the whole-path figure is a mean by construction, being a
+distance divided by a time.
+
+\emph{Startup accounting.} The spline is traversed over the whole
+$T_{\text{total}}$, ramp included, not over the $\ell/v$ cruise window the
+formula suggests, so the mean speed along the path is $\ell_{\text{arc}} /
+T_{\text{total}}$---\SI{\MeanSpeedSixty}{}, \SI{\MeanSpeedNinety}{} and
+\SI{\MeanSpeedOneTwenty}{\metre\per\second} for the three courses. A second,
+smaller term sits inside this one: $\ell$ is the polyline through the
+waypoints, while the interpolating spline necessarily bows outside it
+(\SIrange{\ArcLo}{\ArcHi}{\metre} of arc against \SI{\Polyline}{\metre}); a
+curve through a fixed sequence of points is never shorter than the straight
+segments joining them. That extra length is covered within the same
+$T_{\text{total}}$, so it \emph{raises} the mean speed and thereby narrows the
+gap to the nominal figure rather than widening it. Net of the two, the nominal
+figure sits a factor of \StartupFacSixty{}, \StartupFacNinety{} and
+\StartupFacOneTwenty{} above that whole-path mean.
+
+\emph{Non-uniform parameterisation.} The spline advances uniformly in $u$
+rather than by arc length, and world speed is $|dP/du|\,\dot u$
+(Figure~\ref{fig:splineparam}). The clamped knot vector repeats its end knots,
+so the first and last spans each carry two waypoints against one for every
+interior span---\SI{\GearEnd}{\metre} of path per unit of $u$ against
+\SI{\GearInterior}{\metre}, a factor of \GearRatio{}. At constant $\dot u$ the
+gates are therefore geared low while the final span, which lies beyond the last
+gate, sprints to about \SI{\PeakRef}{\metre\per\second} where no result is
+scored. This carries the whole-path mean down to the median at the gates, a
+further factor of \GearingFacSixty{}, \GearingFacNinety{} and
+\GearingFacOneTwenty{}, and it is the only one of the two that grows with
+corner sharpness.
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=\textwidth]{figures/spline_parameter.pdf}
+  \caption{Why the spline parameter is not arc length, on the $90^\circ$
+  course. \textbf{(a)} and \textbf{(b)} show two equal intervals of $u$, each
+  dotted twelve times per span and drawn to the same scale. The two end spans
+  in \textbf{(a)} cover half again as much ground as the two interior spans in
+  \textbf{(b)}, so their dots are spread further apart---and dot spacing is
+  exactly what $\dot u$ converts into speed. The labels in \textbf{(a)} give
+  the cause: the clamped knot vector puts waypoints at $u=0$, $1/3$ and
+  \num{1}, three of them inside one span, against one per span in
+  \textbf{(b)}. \textbf{(c)} is the same fact as a curve. The shaded end spans
+  run at \SI{\GearEnd}{\metre} per unit of $u$ against
+  \SI{\GearInterior}{\metre} inside, exactly a factor of \GearRatio{}; the
+  ripple within each interior span is the corner itself. Every scored gate lies
+  in the low-geared interior.}
+  \label{fig:splineparam}
+\end{figure}
+
+The products, \SpeedRatioSixty{}, \SpeedRatioNinety{} and
+\SpeedRatioOneTwenty{}, are the ratios quoted
+above. Every airframe flies the identical reference, so comparisons within a
+column are unaffected and bisection stays monotone. Two things follow all the
+same: the numbers here are an ordinal difficulty scale rather than physical
+gate speeds, and they are \textbf{not comparable across turn angles}, since
+each column is divided by a different factor. All of this is measured on the
+reference trajectory alone by \texttt{docs/tools/speed\_semantics.py}.
 
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
 bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the
@@ -336,6 +416,7 @@ uv run --no-sync python Reports/make\_figures.py \\
 latexmk -pdf Reports/morphology\_gate\_racing.tex
 \end{quote}
 
+\begin{sloppypar}
 Source data: \texttt{tuned\_strict\_completion.csv}, all three turn angles under
 the strict gate criterion. The superseded sequential-criterion runs
 (\texttt{tuned\_60deg.csv}, \texttt{tuned\_90deg.csv},
@@ -345,5 +426,32 @@ derivations behind every metric, and the defects fixed to make these
 measurements possible are recorded in
 \texttt{docs/drone\_morphology\_gate\_racing.md}, whose own claims are checked
 against the code by \texttt{docs/tools/check\_doc\_claims.py} in the unit suite.
+\end{sloppypar}
 
+
+\appendix
+
+\section{Feedforward formulation of trajectory tracking}\label{sec:feedforward}
+
+With feedforward enabled, the Lee (geometric) controller forms its acceleration
+command as
+
+\[
+  a_{\rm cmd}
+  = \underbrace{K_p\,(p_{\rm ref} - p)}_{\text{position error}}
+  \;+\; \underbrace{K_v\,(\dot p_{\rm ref} - \dot p)}_{\text{velocity error}}
+  \;+\; \underbrace{\ddot p_{\rm ref}}_{\text{feedforward}}
+\]
+
+which is converted to force by $F = m(a_{\rm cmd} - g)$.
+
+With it disabled, $\dot p_{\rm ref}$ defaults to zero and $\ddot p_{\rm ref}$
+is dropped:
+
+\[
+  a_{\rm cmd} = K_p\,(p_{\rm ref} - p) \;-\; K_v\,\dot p .
+\]
+The middle term has become pure damping against motion: the controller is then
+tuned to hold position at $p_{\rm ref}$ rather than to follow it, and so chases
+the reference instead of tracking it.
 \end{document}

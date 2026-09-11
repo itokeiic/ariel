@@ -10,6 +10,9 @@ drift from the code or the measurements.
 from __future__ import annotations
 
 import csv
+import importlib.util
+import sys
+from fractions import Fraction
 from pathlib import Path
 
 import matplotlib
@@ -22,6 +25,9 @@ from ariel.body_phenotypes.drone.decoders import spherical_angular_to_blueprint
 from ariel.simulation.drone.drone_configuration import DroneConfiguration
 from ariel.simulation.drone.plant import RotorGeometry, moment_allocation
 from ariel.simulation.drone.gate_metrics import crossing_report, n_passed
+from ariel.simulation.drone.controllers.trajectory_generation.bspline_gate_trajectory import (
+    BSplineGateTrajectory,
+)
 from ariel.simulation.tasks.slalom_course import slalom_gates
 
 REPO = Path(__file__).resolve().parents[1]
@@ -141,6 +147,132 @@ def figure_courses(turns=(60.0, 90.0, 120.0)) -> None:
     fig.tight_layout()
     fig.savefig(OUT / "courses.pdf", bbox_inches="tight")
     plt.close(fig)
+
+
+# ---------------------------------------------------------------- figure 2b
+def _u_label(u: float) -> str:
+    """Waypoint parameter as an exact label.
+
+    The interior waypoints land on integer knots; the second and second-to-last
+    land on thirds (verified to 1e-10), so a decimal reads as an approximation
+    of something that is in fact exact.
+    """
+    f = Fraction(u).limit_denominator(3)
+    if f.denominator == 1:
+        return f"{f.numerator}"
+    whole, rem = divmod(f.numerator, f.denominator)
+    frac = rf"\frac{{{rem}}}{{{f.denominator}}}"
+    return f"${frac}$" if whole == 0 else f"${whole}{frac}$"
+
+
+def spline_gearing(turn: float = 90.0) -> dict[str, float]:
+    """Metres of path per unit of `u`, per span. No plotting.
+
+    Split out of `figure_spline_parameter` so `numbers_tex` can quote these
+    without rendering a figure -- the numbers test regenerates numbers.tex and
+    should not have to draw.
+    """
+    co = slalom_gates(turn, n_gates=15)
+    tr = BSplineGateTrajectory(co.trajectory_config())
+    tr.fit_offsets_to_gates()
+    s = tr.spline
+    u = np.linspace(s.u_min, s.u_max, 40001)
+    P = np.array([s.position(x) for x in u])
+    g = np.linalg.norm(np.gradient(P, u, axis=0), axis=1)
+    first = float(g[u <= 1].mean())
+    interior = float(g[(u > 1) & (u < 13)].mean())
+    last = float(g[u >= 13].mean())
+    return {"first": first, "interior": interior, "last": last,
+            "ratio": first / interior}
+
+
+def figure_spline_parameter(turn: float = 90.0) -> dict[str, float]:
+    """Why the spline parameter is not arc length, and what it costs at the gates.
+
+    The clamped knot vector repeats the end knots degree+1 times, so the first
+    and last spans each carry TWO waypoints while every interior span carries
+    one. At a constant du/dt that doubles the reference speed over those two
+    spans and starves the rest. Returns the measured per-span gearing so the
+    caption cannot drift from the picture.
+    """
+    co = slalom_gates(turn, n_gates=15)
+    tr = BSplineGateTrajectory(co.trajectory_config())
+    tr.fit_offsets_to_gates()
+    s = tr.spline
+
+    u = np.linspace(s.u_min, s.u_max, 40001)
+    P = np.array([s.position(x) for x in u])
+    g = np.linalg.norm(np.gradient(P, u, axis=0), axis=1)
+    wp_u = np.array([u[np.argmin(np.linalg.norm(P - w, axis=1))] for w in co.path_pos])
+
+    fig = plt.figure(figsize=(7.0, 4.5))
+    grid = fig.add_gridspec(2, 2, height_ratios=[1.0, 0.85], hspace=0.42, wspace=0.16)
+
+    for col, (ua, ub, tag, tone) in enumerate((
+            (0.0, 2.0, "first two spans", BAD),
+            (6.0, 8.0, "two interior spans", GOOD))):
+        ax = fig.add_subplot(grid[0, col])
+        m = (u >= ua) & (u <= ub)
+        arc = float(np.linalg.norm(np.diff(P[m], axis=0), axis=1).sum())
+        ax.plot(P[m, 0], P[m, 1], "-", color=INK, lw=1.0, zorder=2)
+        # Twelve dots per span, not ten: the second waypoint sits at u=1/3
+        # exactly, so a step of 0.1 straddles it and the marker looks
+        # misaligned. Twelfths land on every waypoint in both panels.
+        ud = np.arange(ua, ub + 1e-9, 1.0 / 12.0)
+        D = np.array([s.position(x) for x in ud])
+        ax.plot(D[:, 0], D[:, 1], "o", color=ACCENT, ms=2.6, zorder=3)
+        sel = (wp_u >= ua - 1e-9) & (wp_u <= ub + 1e-9)
+        W = co.path_pos[sel]
+        ax.plot(W[:, 0], W[:, 1], "s", mfc="none", mec=tone, mew=1.2, ms=7, zorder=4)
+        for wu, w in zip(wp_u[sel], W):
+            # wp_u comes from a nearest-sample search; the knots are exact.
+            # y is inverted, so a waypoint at y~0 sits at the TOP of the weave
+            # on screen and its label must go up; one at the amplitude goes
+            # down. A fixed offset lands on the curve at every other waypoint.
+            dy = 9 if w[1] < 0.5 * co.amplitude * 2 else -13
+            ax.annotate(f"$u$={_u_label(wu)}", (w[0], w[1]), fontsize=6.5,
+                        color=tone, textcoords="offset points",
+                        xytext=(0, dy), ha="center")
+        x0 = P[m, 0][0]
+        ax.set_xlim(x0 - 1.5, x0 - 1.5 + 8.6)
+        ax.set_ylim(2.75, -1.05)          # NED: y runs down the page, as in Fig. 2
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.25, lw=0.4)
+        ax.tick_params(labelsize=7)
+        ax.set_xlabel("x (m)", fontsize=8)
+        if col == 0:
+            ax.set_ylabel("y (m)", fontsize=8)
+        # Kept short: two titles share one line at \textwidth and collide if
+        # the descriptive tag goes here. The tag lives in the caption instead.
+        ax.set_title(rf"({'ab'[col]})  $u\in[{ua:g},{ub:g}]$:  {arc:.2f} m,  "
+                     rf"{len(W)} waypoints",
+                     fontsize=8, loc="left", color=tone)
+
+    ax = fig.add_subplot(grid[1, :])
+    ax.axvspan(0, 1, color=BAD, alpha=0.10, zorder=0)
+    ax.axvspan(13, 14, color=BAD, alpha=0.10, zorder=0)
+    for k in range(15):
+        ax.axvline(k, color="0.87", lw=0.5, zorder=0)
+    ax.plot(u, g, "-", color=ACCENT, lw=1.2, zorder=3)
+    ax.plot(wp_u, np.full_like(wp_u, 0.3), "^", ms=3.4, color=GOOD, zorder=4)
+    ax.plot(wp_u[[1, 15]], [0.3, 0.3], "^", ms=3.4, color=BAD, zorder=5)
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 6.0)
+    ax.grid(alpha=0.25, lw=0.4, axis="y")
+    ax.tick_params(labelsize=7)
+    ax.set_xlabel("spline parameter $u$   (triangles: waypoints; grey: knots)", fontsize=8)
+    ax.set_ylabel(r"$|dP/du|$ (m)", fontsize=8)
+
+    first = float(g[u <= 1].mean())
+    interior = float(g[(u > 1) & (u < 13)].mean())
+    last = float(g[u >= 13].mean())
+    ax.set_title(rf"(c)  metres of path per unit of $u$:  {first:.2f} in each end "
+                 rf"span against {interior:.2f} inside", fontsize=8, loc="left")
+
+    fig.savefig(OUT / "spline_parameter.pdf", bbox_inches="tight")
+    plt.close(fig)
+    return {"first": first, "interior": interior, "last": last,
+            "ratio": first / interior}
 
 
 # ---------------------------------------------------------------- figure 3
@@ -271,7 +403,47 @@ def results_table() -> str:
     return "\n".join(head + lines + tail) + "\n"
 
 
-def numbers_tex(angles: np.ndarray) -> str:
+def _speed_semantics_module():
+    """Import docs/tools/speed_semantics.py, which is a script, not a package."""
+    path = REPO / "docs" / "tools" / "speed_semantics.py"
+    spec = importlib.util.spec_from_file_location("speed_semantics", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["speed_semantics"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def speed_semantics_vals(best: dict[str, str]) -> dict[str, str]:
+    """The nominal-vs-gate-speed decomposition, as macros.
+
+    Driven by the per-course best speeds already read from the CSV, so the
+    operating points these are measured at cannot drift from Table 1. The two
+    factors are asserted to reproduce the ratio: if they ever stop multiplying
+    out, the decomposition in the report is wrong and the build should fail
+    rather than emit a plausible-looking number.
+    """
+    measure = _speed_semantics_module().measure
+    vals: dict[str, str] = {}
+    arcs = []
+    for turn, name in ((60.0, "Sixty"), (90.0, "Ninety"), (120.0, "OneTwenty")):
+        r = measure(turn, float(best[f"Best{name}"]))
+        assert abs(r["startup_factor"] * r["gearing_factor"] - r["ratio"]) < 5e-3, (
+            f"{turn} deg: startup x gearing does not reproduce the ratio")
+        arcs.append(r["arc"])
+        vals |= {
+            f"GateSpeed{name}": f"{r['gate_med']:.2f}",
+            f"MeanSpeed{name}": f"{r['mean']:.2f}",
+            f"StartupFac{name}": f"{r['startup_factor']:.2f}",
+            f"GearingFac{name}": f"{r['gearing_factor']:.2f}",
+            f"SpeedRatio{name}": f"{r['ratio']:.2f}",
+        }
+        vals["Polyline"] = f"{r['polyline']:.1f}"
+        vals["PeakRef"] = f"{max(float(vals.get('PeakRef', 0)), r['peak']):.0f}"
+    vals |= {"ArcLo": f"{min(arcs):.1f}", "ArcHi": f"{max(arcs):.1f}"}
+    return vals
+
+
+def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> str:
     """Every number quoted inline in the report, as macros.
 
     The prose used to carry these as literals, and one of them drifted: the raw
@@ -279,6 +451,8 @@ def numbers_tex(angles: np.ndarray) -> str:
     t = 24-66 deg -- an earlier sweep's range -- not over the feasible family
     the report actually defines. Generating them removes the failure mode.
     """
+    if gearing is None:
+        gearing = spline_gearing()
     lo, hi = float(np.degrees(angles[0])), float(np.degrees(angles[-1]))
     roll = np.array([agility(float(t))[0] for t in angles])
     pitch = np.array([agility(float(t))[1] for t in angles])
@@ -294,8 +468,11 @@ def numbers_tex(angles: np.ndarray) -> str:
     speed_vals = {}
     for t, name in ((60.0, "Sixty"), (90.0, "Ninety"), (120.0, "OneTwenty")):
         col, b, ties, ang = _col(t)
+        # \text{--} rather than a bare "--": the report cites these inside math
+        # mode ($\ArgmaxSixty^\circ$), where the en-dash ligature does not
+        # apply and "--" sets as two minus signs.
         rng = (f"{ties[0]:.2f}" if len(ties) == 1
-               else f"{ties[0]:.2f}--{ties[-1]:.2f}")
+               else rf"{ties[0]:.2f}\text{{--}}{ties[-1]:.2f}")
         speed_vals |= {
             f"Best{name}": f"{b:.3f}",
             f"Argmax{name}": rng,
@@ -319,6 +496,10 @@ def numbers_tex(angles: np.ndarray) -> str:
         "PubBestSixty": "12.172", "PubBestNinety": "8.578",
         "PubBestOneTwenty": "7.078",
         **speed_vals,
+        **speed_semantics_vals(speed_vals),
+        "GearEnd": f"{gearing['first']:.2f}",
+        "GearInterior": f"{gearing['interior']:.2f}",
+        "GearRatio": f"{gearing['ratio']:.2f}",
     }
     body = "".join(f"\\newcommand{{\\{k}}}{{{v}}}\n" for k, v in vals.items())
     return "% Generated by Reports/make_figures.py -- do not edit.\n" + body
@@ -329,11 +510,12 @@ if __name__ == "__main__":
     angles = np.linspace(lo, hi, 7)
     figure_morphologies(angles)
     figure_courses()
+    gearing = figure_spline_parameter()
     figure_flights(flight_stats())
     (OUT.parent / "results_table.tex").write_text(results_table())
-    (OUT.parent / "numbers.tex").write_text(numbers_tex(angles))
+    (OUT.parent / "numbers.tex").write_text(numbers_tex(angles, gearing))
     print(f"feasible half-angle range: {np.degrees(lo):.2f}-{np.degrees(hi):.2f} deg")
     print("wrote", OUT / "morphologies.pdf", OUT / "courses.pdf",
-          OUT / "flights.pdf",
+          OUT / "spline_parameter.pdf", OUT / "flights.pdf",
           OUT.parent / "results_table.tex", OUT.parent / "numbers.tex",
           sep="\n      ")

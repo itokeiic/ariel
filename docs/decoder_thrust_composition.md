@@ -1,7 +1,11 @@
 # The decoder leaks arm pitch into thrust direction
 
-**Status: open.** Found 2026-09-10 while re-running the `elevation` reference
-morphology against the fixed plant. Not guarded. This file is the work order.
+**Status: FIXED 2026-09-11**, keeping the absolute convention (decided that day).
+§9 records what landed, including a second, different defect in the MJCF
+backend. Sections 1–8 are the original work order, kept as written.
+
+*Original status:* open. Found 2026-09-10 while re-running the `elevation`
+reference morphology against the fixed plant. Not guarded.
 
 Code and measurements are verbatim from the working tree at that date.
 
@@ -169,3 +173,57 @@ achieves.
   produces in-plane force the controller can neither command nor account for.
   This decoder fix does not address that; it removes the bodies that hit it by
   accident.
+
+---
+
+## 9. What landed (2026-09-11)
+
+**Decision.** Keep the absolute convention the encoding documents: `motor_az` and
+`motor_pitch` give the thrust direction in the body frame, independent of the arm.
+
+**Decoder** (`src/ariel/body_phenotypes/drone/decoders.py`). The motor's local rpy
+is now the rotation that turns the arm's frame into the orientation the genome
+asks for, `R_local = R_arm^T @ R(0, motor_pitch, motor_az)`, converted back to rpy
+by a new `_R_to_rpy` in `src/ariel/body_phenotypes/drone/backends.py`. For a level
+arm (`arm_pitch == 0`) the legacy subtraction is kept verbatim: it is exact there,
+and keeping it makes every planar genome -- all published results -- decode bit
+for bit as before (1800 of 1800 motors checked).
+
+**A second defect, in the MJCF backend.** `blueprint_to_mjspec` did not compose
+rotations like the other backends; it *added* Euler angles to cancel the arm
+(`motor pitch + arm pitch`, `motor yaw + arm yaw`), reading arm pitch from the
+arm pose, where the decoder stores it negated. Its thrust axis was therefore off
+by exactly **twice** the arm pitch, not by the propeller list's error: measured
+30.0° for the 15° `elevation` arm, and 40°, 60° and 90° for arms pitched 20°, −30°
+and 45°. It now composes `R_arm @ R_local`, keeping the additive form only for a
+level arm, where it is exact. The URDF and USD backends already composed matrices,
+so they inherit the decoder fix unchanged.
+
+**Verified** (`tests/unit/test_drone_ec/test_decoder_thrust_composition.py`):
+
+| check | result |
+|---|---|
+| `elevation` reference body, propellers and MJCF | 0.0° error; all thrust axes along body z; rotor 0 still out of plane |
+| 300 random elevated bodies, arm pitch to ±85°, motor pitch to ±150° | ≤ 8.5e-07° in both, floating-point noise |
+| planar genomes | motor pose bit-identical to the legacy tuple |
+| `_R_to_rpy` round trip | machine precision, gimbal singularity included |
+| instrument check | the legacy composition fails the same assertion |
+
+**Consequences.** Every EA genome with non-zero arm pitch changes phenotype; the
+examples on this branch sample arm elevation over ±90°. The thrust-tilt exposure
+table in `docs/drone_morphology_gate_racing.md` §4.1 was regenerated, since it had
+measured leaked direction. The `elevation` reference body is now
+`axial_thrust=True`. `docs/tools/elevation_corrected_probe.py` is redundant -- its
+correction now equals the decoder's output -- and is kept to reproduce §5.
+
+**Verification item 4 (it flies, from the real pipeline).** Regenerating
+`docs/data/perturbation.csv` on 2026-09-11 flew the `elevation` body through the
+unpatched sweep and the fixed decoder: 9.930 / 7.703 / 6.297 m/s at 60° / 90° / 120°,
+with every bisection converged and monotone. These differ from the §5 probe
+(9.852 / 7.586 / 6.336) because that run used diagonal attitude gains and this body
+has non-zero products of inertia; the two are not expected to match.
+
+**Not examined.** `cartesian_euler_to_blueprint` authors its motor rpy literally in
+an elevated arm's frame. Whether that matches its encoding's intent is the same
+kind of question, and was not looked at.
+

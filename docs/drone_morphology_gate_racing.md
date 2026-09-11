@@ -7,12 +7,16 @@ Read this before touching the drone EA, the Lee controller, or the B-spline gate
 trajectory: several defects were found in code that had already produced
 results, and some of those results should not be trusted.
 
-> **The one open bug that bounds what this codebase can currently claim.**
-> The plant ignores each rotor's thrust direction (§3.2). It simulates all
-> thrust along the body axis while the *controller* allocates using the true
-> normals, so a canted rotor is allocated as tilted and flown as axial. It is
-> **guarded, not fixed** -- `_guard_axial_thrust` warns, or raises under
-> `ARIEL_STRICT_THRUST_NORMALS=1`.
+> **FIXED 2026-09-10.** The plant used to ignore each rotor's thrust direction
+> (§3.2): it simulated all thrust along the body axis while the *controller*
+> allocated using the true normals, so a canted rotor was allocated as tilted
+> and flown as axial. Both plants (`DroneSimulator` and the torch env) now
+> integrate each rotor along its own axis, and `_guard_axial_thrust` has been
+> deleted. See [plant_thrust_direction.md](plant_thrust_direction.md) §9.
+> Nothing in the azimuth sweep changes: that family has zero cant and zero
+> products of inertia, so it was exactly unaffected either way. The §7.2d
+> perturbation results **do** change -- see the note there.
+> *(Corrected 2026-09-11: this banner first said nothing in the document changes.)*
 >
 > It is a **regression introduced in ARIEL**, not inherited: airevolve's plant,
 > from which this one descends, computes `F_body = Bf @ U` and honours the
@@ -148,7 +152,7 @@ margin on top, a 2.6x authority difference is spent on control *effort* (the
 not "geometry does not matter" but the sharper: **a per-body-tuned model-based
 controller designs static geometry out of the closed loop.** Morphology shows up
 only where the controller cannot compensate -- a changed achievable wrench set
-(tilted rotors, needs the normal-aware plant) or the transients of the shape
+(tilted rotors -- simulated since the 2026-09-10 plant fix, §3.2) or the transients of the shape
 change itself.
 
 ### SUPERSEDED (2026-08-16): the numbers below were measured against a controller bottleneck
@@ -353,10 +357,10 @@ against a 0.0533 m requirement (overlapping rotors) and arm elevations of 86°
 and 112° against a declared ±15° clamp. **Treat every example-17 result from
 before this fix as invalid.**
 
-### 3.2 The plant ignores thrust direction (`a6b16c0`, guarded not fixed)
+### 3.2 The plant ignored thrust direction (`a6b16c0`; fixed 2026-09-10)
 
-`dynamics_params.derive_reference_params` builds the plant from each rotor's
-`loc` but **ignores `dir[0:3]`**, applying all thrust along the body axis, while
+*History -- until 2026-09-10:* `dynamics_params.derive_reference_params` built the plant from each rotor's
+`loc` but **ignored `dir[0:3]`**, applying all thrust along the body axis, while
 `DroneConfiguration._compute_allocation_matrices` honours it when building the
 `Bf`/`Bm` that `get_params()` hands the controller as `mixerFM`. A canted rotor
 is therefore *allocated* as tilted and *simulated* as axial.
@@ -365,12 +369,18 @@ is therefore *allocated* as tilted and *simulated* as axial.
 the rewrite, and the verification plan -- is in
 [plant_thrust_direction.md](plant_thrust_direction.md).**
 
-`_guard_axial_thrust` now warns once per process (or raises under
-`ARIEL_STRICT_THRUST_NORMALS=1`) with the deviation and the fraction of thrust
-not simulated. **This is still open**: a normal-aware plant is the real fix, and
-it is why the sweeps here are confined to arm azimuth and length, the axes the
-plant models correctly. Arm elevation and motor cant are *not* trustworthy on
-this plant.
+**SUPERSEDED 2026-09-10: fixed.** `_guard_axial_thrust` warned once per process
+(or raised under `ARIEL_STRICT_THRUST_NORMALS=1`) with the deviation and the
+fraction of thrust not simulated. The plant now honours rotor normals and the
+guard has been deleted; see [plant_thrust_direction.md](plant_thrust_direction.md)
+§9. The sweeps here were confined to arm azimuth and length, the axes the
+reduced plant modelled correctly, and that confinement is why they are
+unaffected by the fix. Arm elevation and motor cant are *not* trustworthy on
+this plant. *(Corrected 2026-09-11: arm elevation is still untrustworthy, but
+because the decoder leaks arm pitch into thrust direction -- see
+[decoder_thrust_composition.md](decoder_thrust_composition.md) -- not because of
+the plant; the decoder was fixed later that day. A deliberately canted rotor is now simulated correctly, but produces
+in-plane force the controller's 4-DOF mixer cannot command; see §8.)*
 
 **It is a regression, not an inherited limitation, and the fix has a working
 reference.** ARIEL's `DroneSimulator` descends from airevolve's (TU Delft
@@ -399,6 +409,10 @@ made there:
 | motor lag + sqrt-poly command | absent | **present** (`tau`) |
 | parity test against the reference | — | **yes** |
 
+*(This table describes the reduced form as it stood until 2026-09-10. Both
+ARIEL plants now honour thrust direction and invert the full inertia tensor;
+`omega x I omega` is still dropped.)*
+
 It gained motor and drag fidelity and lost 3-D geometry fidelity; the loss does
 not appear to have been noticed, and the parity test now pins the reduced
 behaviour in place.
@@ -423,6 +437,12 @@ expected difference rather than discovering it -- force, roll and pitch should
 match to machine precision, but **yaw will change by design**, since the reduced
 form linearises yaw at hover (`k_r_signed . W`, plus a `dW` reaction term) while
 `Bm @ U` is quadratic in `W`.
+
+*(As landed, 2026-09-10: the fix deliberately **kept** the hover-linearised yaw
+drag torque, now oriented along each rotor's own axis, so that force, roll,
+pitch **and yaw** match the scalar form exactly for a coplanar body -- verified
+at 0.0 deviation. The quadratic yaw form remains open. The characterisation test
+called for above exists: `tests/unit/test_simulation/test_plant_thrust_direction.py`.)*
 
 **Scope.** airevolve's own morphology results are unaffected -- its plant flies
 canted rotors correctly. The exposure is ARIEL-only.
@@ -597,16 +617,26 @@ model -- `DroneInterface` wrapping `DroneSimulator`, whose equations of motion
 are built symbolically with sympy and compiled once per airframe (twelve
 rigid-body states plus one per motor), integrated at `SIM_DT = 0.005`. It
 carries first-order motor lag and aerodynamic drag, which a rigid-body engine
-does not give you for free, and it makes the simplification of §3.2: **thrust is
-applied along one body axis, ignoring each rotor's own normal.**
+does not give you for free, and until 2026-09-10 it made the simplification of
+§3.2: **thrust was applied along one body axis, ignoring each rotor's own
+normal.** Both the sympy and the torch plant now honour each rotor's normal.
 
 #### Who that simplification actually bites
 
 | bodies sampled | n | median tilt | max tilt | tilted > 1° | thrust not simulated (median) |
 |---|---|---|---|---|---|
 | azimuth sweep (this document) | 7 | 0.0° | 0.0° | 0% | 0% |
-| EA, example 17 limits (±15° elevation and cant) | 300 | 22.3° | 41.5° | 100% | 38% |
-| EA, handler defaults (±90° elevation, ±180° cant) | 300 | 80.2° | 90.0° | 100% | 99% |
+| EA, example 17 limits (±15° elevation and cant) | 300 | 12.9° | 15.0° | 100% | 22% |
+| EA, handler defaults (±90° elevation, ±180° cant) | 300 | 78.7° | 90.0° | 100% | 98% |
+
+> *History (2026-09-10):* measured against the pre-fix plant, so "thrust not
+> simulated" was literal. The plant now simulates tilt; read the table as how
+> much of the search space depends on tilt being modelled. Tilt here is as
+> decoded. *Regenerated 2026-09-11 after the decoder fix:* the EA rows previously
+> read median tilts of 22.3° and 80.2°, which included direction the decoder
+> leaked from arm pitch rather than the genome asked for
+> ([decoder_thrust_composition.md](decoder_thrust_composition.md)); they now
+> reflect motor pitch alone.
 
 Read the first row against the others. The azimuth sweep is **exactly** unaffected
 -- not approximately -- because sweeping arm azimuth moves rotors *within* the
@@ -620,6 +650,15 @@ rotor's thrust is allocated by the controller and never applied by the plant.
 every EA result this pipeline produces"**, and it is why open item 1 is the
 priority rather than something to schedule behind the sweeps. Recorded
 2026-08-19; generated by `docs/tools/thrust_tilt_exposure.py`.
+
+> **Superseded 2026-09-11.** Both halves of that paragraph are out of date. The
+> plant now applies the in-plane thrust it once dropped (item 1, fixed
+> 2026-09-10), so tilt is no longer thrust "allocated and never applied". And the
+> tilt itself was inflated by the decoder's arm-pitch leak (item 11, fixed
+> 2026-09-11): regenerated, the example-17 row's median in-plane thrust fraction is
+> 22%, not more than a third, and its median tilt is 12.9° with a maximum of
+> 15.0° -- exactly the ±15° motor-pitch clamp. What still blocks tilted bodies is
+> the controller's 4-DOF mixer (item 12).
 
 #### The port is one adapter
 
@@ -948,8 +987,8 @@ flag nobody can safely change.
 |---|---|---|
 | `--speed` | 6.0 | Nominal speed for fixed-speed modes. Traversal time is `startup + path_length/speed`, so this is a true speed, not a time budget. |
 | `--speed-lo` / `--speed-hi` | 2.0 / 6.0 | Initial bisection bracket. A body failing at `lo` is reported as unflyable rather than scored. |
-| `--speed-cap` | 12.0 | The bracket **widens upward** rather than clipping, since a ceiling would make good bodies tie -- the exact failure the max-speed objective exists to avoid. This bounds the widening. |
-| `--speed-tol` | 0.125 | Bisection resolution. Each halving costs one rollout; 0.0625 was used for the reported sweeps because the morphology spread is only 1-2 steps wide at 0.125. |
+| `--speed-cap` | 25.0 | The bracket **widens upward** rather than clipping, since a ceiling would make good bodies tie -- the exact failure the max-speed objective exists to avoid. This bounds the widening. **Changed 2026-09-11** from 12.0: every recent recorded command passed 25, so the default now matches, and the one recorded run that relied on 12 (the §2 120° row, whose 60° column is censored at the cap) now records `--speed-cap 12` explicitly. |
+| `--speed-tol` | 0.0625 | Bisection resolution. Each halving costs one rollout. Every reported sweep uses 0.0625, because the morphology spread is only 1-2 steps wide at 0.125. **Changed 2026-09-11**: the default was 0.125 while every recorded command needed 0.0625, so a command copied without the flag stopped one halving early and read one step (0.039 m/s) low; the default now matches the recorded data. |
 | `--sim-margin` | 1.6 | Rollout time as a multiple of traversal time, so a lagging drone can still finish. Tracking error is accumulated only over the course itself -- past `total_time` the reference clamps and the drone overruns, which turned a 0.37 m cruise error into a reported 4.3 m. |
 | `--cal-speeds` / `--cal-turns` | 2,3,4 / 60,90,120 | The `--calibrate` grid. |
 | `--sweep-turns` | 60,90,120 | Corner sharpnesses for `--max-speed-sweep`. This is the *structured* generalisation check that replaces random jitter. |
@@ -986,7 +1025,7 @@ flag nobody can safely change.
 | `--log-npz` | save the recorded trajectory for offline analysis; how the per-gate altitude table in §3.8 was produced |
 | `--perturbation-sweep` | max completing speed for each canonical single-arm perturbation (`reference_morphologies`), the flight counterpart to the inertia table in §7.2c |
 | `--asym-deg` | perturb arm 0's azimuth, breaking bilateral symmetry. Exercises the case where diagonal and matrix gains diverge (§7.2c) |
-| `--matrix-gains` | derive attitude gains from the full inertia tensor rather than its diagonal (§7.2c) |
+| `--matrix-gains` | derive attitude gains from the full inertia tensor (**default since 2026-09-11**) rather than its diagonal; the `no-` form restores the diagonal (§7.2c). Identical for bodies with zero products of inertia, including every body in the azimuth sweep; for an asymmetric body the diagonal form mismatches the plant, which integrates the full tensor since 2026-09-10. |
 
 ## 7. Variables and metrics: what they mean and where they come from
 
@@ -1155,6 +1194,19 @@ gains on unequal axes would give three *different* bandwidths, which is the
 situation `auto_scale_gains` exists to avoid. What is held equal is the
 closed-loop response $(\omega_n,\zeta)$, not the numbers producing it.
 
+**What "bandwidth" means here.** This document uses *bandwidth* for $\omega_n$,
+the natural frequency of the attitude error dynamics above: it sets how fast an
+attitude error is corrected. At $\omega_n = 24$ rad/s and $\zeta = 1$ the error
+decays as $(1+\omega_n t)e^{-\omega_n t}$ -- time constant 41.7 ms, under 10% after
+162 ms and under 2% after 243 ms. That is the same order as the
+0.28 s a 2.4 m slalom leg takes at 8.5 m/s, which is why the attitude loop's
+speed is part of what limits a body. Strictly, the $-3$ dB closed-loop bandwidth
+of a critically damped second-order loop is $0.644\,\omega_n$ = 15.45 rad/s
+(2.46 Hz), not $\omega_n$; the two are proportional, so every comparison
+made in terms of $\omega_n$ holds. With coupled axes (§7.2c) the loop has three
+rotational modes, and a *bandwidth spread* means their natural frequencies,
+$\sqrt{\operatorname{eig}(I^{-1}K_R)}$, differ.
+
 **Three caveats this hides**, in increasing order of importance here:
 
 1. *Large errors.* $\lVert e_R\rVert$ saturates (it is bounded by 1), so the
@@ -1163,18 +1215,21 @@ closed-loop response $(\omega_n,\zeta)$, not the numbers producing it.
 2. *Off-diagonal inertia.* `auto_scale_gains` takes `np.diag(quad.params["IB"])`,
    so the decoupling above assumes the body axes are principal axes. Exact for
    the family swept here, not for an asymmetric one -- see §7.2c, which is also
-   where the fix lives.
+   where the fix lives. Since 2026-09-10 the plant integrates the full tensor, so
+   for an asymmetric body the diagonal gains are also a controller/plant mismatch,
+   with a measured flight cost (§7.2c).
 3. *The gyroscopic term is cancelled but never simulated.* The control law adds
    $+\Omega\times I\Omega$ to cancel a term the reduced plant does not have:
-   `dynamics_params` integrates $\dot{\Omega} = I^{-1}M$ with no
-   $\Omega\times I\Omega$ (`d_p = Mx`, `d_q = My`, `d_r = Mz`). So on this plant
+   `DroneSimulator` integrates $\dot{\Omega} = I^{-1}M$ -- with the full tensor
+   since 2026-09-10, a diagonal one before -- and never with
+   $\Omega\times I\Omega$. So on this plant
    the compensation is not a cancellation but an **injected torque**. It is small
    for the bodies swept here -- at a hard reversal rate of
    $\Omega=(6,3,1)$ rad/s it is 0.012-0.051 N·m against 1.7-3.9 N·m of available
    roll torque, i.e. under 3% -- and it vanishes exactly at the X quad where
    $I_{xx}=I_{yy}$. It would not be negligible for a strongly asymmetric or
    fast-spinning body, and it is a second instance of the controller and plant
-   disagreeing about the model (§3.2 is the first).
+   disagreeing about the model (§3.2 was the first; it is fixed, this one is not).
 
 ### 7.2c Principal axes, and the matrix-gain fix (`--matrix-gains`)
 
@@ -1241,6 +1296,26 @@ effort. **For evolving morphologies this is the point**: an EA over asymmetric
 bodies would otherwise reward whichever airframe accidentally receives the most
 bandwidth, confounding geometry with tuning exactly as `auto_scale_gains` at
 fixed bandwidth confounds it the other way.
+
+> **Superseded in part 2026-09-11.** The asymmetric-body flight numbers above
+> (6.562 -> 6.469 m/s, and the tracking and clipping change) were measured on the
+> pre-fix plant, which integrated a *diagonal* inertia -- so at the time the
+> diagonal gains matched the simulator, and only the physical body had the
+> coupling. Since 2026-09-10 the plant integrates the full tensor, and on it the
+> premise holds in flight. The lengthened-arm body at the recorded operating point:
+>
+> | gains | 60° | 90° | 120° |
+> |---|---|---|---|
+> | diagonal (default) | 9.812 | 7.938 | 6.883 |
+> | full tensor (`--matrix-gains`) | 10.320 | 8.367 | 6.727 |
+>
+> Registered before the run: a controller/plant mismatch predicts at least
+> 10.1 m/s at 60° and 8.1 m/s at 90° with matrix gains. Both were met. The 120°
+> loss (0.156 m/s) is not explained. The azimuth body shows no inertia effect
+> at all, because its diagonal model is nearly right (table above). **Use
+> `--matrix-gains` for any asymmetric body** -- the default since 2026-09-11. Full factorial and mechanism:
+> [plant_thrust_direction.md](plant_thrust_direction.md) §9, reproducible with
+> `docs/tools/plant_fix_factorial.py`.
 
 
 #### Finding the principal axes -- and why the controller does not
@@ -1326,12 +1401,12 @@ The §7.2c table shows what a single-arm perturbation does to the *commanded*
 attitude response. This is what it costs in the air -- max completing speed
 under the strict criterion, same controller tuning, same courses:
 
-| perturbation | 60° max speed | 90° max speed | 120° max speed | plant |
+| perturbation | 60° max speed | 90° max speed | 120° max speed | thrust |
 |---|---|---|---|---|
 | symmetric X quad (swept family) | 10.164 m/s | 8.250 m/s | 6.414 m/s | axial |
-| arm 0 azimuth +30 deg | 8.289 m/s | 6.297 m/s | 4.891 m/s | axial |
-| arm 0 lengthened to 0.26 m | 10.633 m/s | 7.273 m/s | 4.617 m/s | axial |
-| arm 0 elevated 15 deg (out of plane) | did not fly | did not fly | did not fly | **not simulated** |
+| arm 0 azimuth +30 deg | 9.227 m/s | 7.078 m/s | 5.281 m/s | axial |
+| arm 0 lengthened to 0.26 m | 10.320 m/s | 8.367 m/s | 6.727 m/s | axial |
+| arm 0 elevated 15 deg (out of plane) | 9.930 m/s | 7.703 m/s | 6.297 m/s | axial |
 
 Azimuth asymmetry is expensive everywhere, 18-24% of top speed. The lengthened
 arm **crosses over**: +4.6% at 60°, where its extra roll authority pays, and
@@ -1346,6 +1421,37 @@ and the reduced plant integrates axial thrust only (§3.2), so the controller
 allocates for a thrust direction the plant does not apply. It is reported here
 because it is the cleanest demonstration in this document of why open item 1
 blocks tilt-rotor work.
+
+> **Regenerated 2026-09-11.** The table above reflects the current code: the plant
+> honours each rotor's axis and measures arms from the CG (fixed 2026-09-10), the
+> decoder composes arm and motor rotations (fixed 2026-09-11), and attitude gains
+> use the full inertia tensor (the default since 2026-09-11). The two paragraphs
+> above it were written for the pre-fix table and are superseded. An interim note
+> written earlier the same day, before the decoder and gains decisions, is
+> replaced by this one.
+>
+> | perturbation | 60° | 90° | 120° | vs symmetric | pre-fix (2026-08-17) |
+> |---|---|---|---|---|---|
+> | symmetric X quad | 10.164 | 8.250 | 6.414 | -- | 10.164 / 8.250 / 6.414 |
+> | arm 0 azimuth +30 deg | 9.227 | 7.078 | 5.281 | -9.2% / -14.2% / -17.7% | 8.289 / 6.297 / 4.891 |
+> | arm 0 lengthened to 0.26 m | 10.320 | 8.367 | 6.727 | +1.5% / +1.4% / +4.9% | 10.633 / 7.273 / 4.617 |
+> | arm 0 elevated 15 deg | 9.930 | 7.703 | 6.297 | -2.3% / -6.6% / -1.8% | did not fly / did not fly / did not fly |
+>
+> - **Azimuth asymmetry costs -9.2% / -14.2% / -17.7%**, not the 18-24% the first
+>   paragraph reports.
+> - **The lengthened arm no longer crosses over**: it is now faster than the symmetric quad at every turn angle
+>   (+1.5% / +1.4% / +4.9%). The reading "extra roll authority pays at 60°, added inertia
+>   costs at 120°" was built on the mis-simulated plant and is withdrawn.
+> - **The elevated arm flies**, costing -2.3% / -6.6% / -1.8%. It was never a
+>   thrust-direction case: its genome asks for axial thrust, and the 11.37° tilt
+>   that grounded it was leaked by the decoder
+>   ([decoder_thrust_composition.md](decoder_thrust_composition.md)). The second
+>   paragraph's attribution to the plant is withdrawn.
+> - The symmetric X quad reproduces the report's Table 1 exactly, end to end on
+>   the current code.
+>
+> Why the plant change moved the asymmetric rows, cell by cell:
+> [plant_thrust_direction.md](plant_thrust_direction.md) §9.
 
 Drawn, with the geometry, in `docs/data/perturbation_morphologies.png`.
 
@@ -1495,6 +1601,34 @@ practice is the *lower* motor bound, not total thrust.
 
 ### 7.6b What `--speed` actually means
 
+> **CORRECTED (2026-08-19): the attribution below is wrong in emphasis.** The
+> measured gate speeds and ratios in this section are correct and unchanged, but
+> the *cause* is not the one given. The shortfall factors into two independent
+> causes that multiply, and the one named here (item 2) is the smaller of the two
+> on the gentler courses:
+>
+> | course | startup accounting | parameterisation | product | reported |
+> |---|---|---|---|---|
+> | 60° | **1.75x** | 1.05x | 1.84x | 1.84x |
+> | 90° | **1.59x** | 1.35x | 2.14x | 2.14x |
+> | 120° | 1.46x | **1.97x** | 2.88x | 2.88x |
+>
+> **Startup accounting**, unaccounted for below: the spline is traversed over the
+> whole `total_time`, ramp included, *not* over the `path_length/speed` cruise
+> window the formula suggests. Mean speed along the path is `arc / total_time`,
+> which is below `speed` by `(1 + startup*speed/path_length) * (path_length/arc)`.
+> At 60° this is 1.75 of the 1.84x, and the parameterisation contributes 5%.
+>
+> The parameterisation effect (item 2) is real and does grow with corner
+> sharpness, 1.05x to 1.97x, which is what makes the shortfall grow across
+> courses -- so the cross-column argument stands. What does not stand is
+> "constant `du/dt` starves the middle of the course": the gates span 94% of the
+> flight at 90° (t = 1.18-7.15 s of 7.589 s), so they are not a middle section
+> flanked by fast ends. Only the final span, *past the last gate*, sprints.
+>
+> Regenerate the decomposition with `docs/tools/speed_semantics.py`. Original
+> text kept below.
+
 **`--speed` is a difficulty knob, not the speed the drone flies through a
 gate.** It sets `total_time = startup_time + path_length / speed`, and two
 things separate that number from the physical gate speed:
@@ -1517,6 +1651,14 @@ best operating point:
 | 60° | 10.164 m/s | 38.40 m | 39.40 m | 3.81 / 5.51 / 6.49 m/s | 28.9 m/s | 1.84x |
 | 90° | 8.367 m/s | 38.40 m | 39.95 m | 3.09 / 3.90 / 5.39 m/s | 28.7 m/s | 2.14x |
 | 120° | 6.648 m/s | 38.40 m | 40.01 m | 2.07 / 2.31 / 4.32 m/s | 26.7 m/s | 2.88x |
+
+Decomposition of that last column into its two independent causes:
+
+| course | total_time | mean = arc/total_time | startup accounting | parameterisation | product | reported |
+|---|---|---|---|---|---|---|
+| 60° | 6.778 s | 5.812 m/s | 1.75x | 1.05x | 1.84x | 1.84x |
+| 90° | 7.589 s | 5.264 m/s | 1.59x | 1.35x | 2.14x | 2.14x |
+| 120° | 8.776 s | 4.559 m/s | 1.46x | 1.97x | 2.88x | 2.88x |
 
 So a body reported at **8.367 m/s** on the 90° course crosses its gates at
 about **3.9 m/s**, and the discrepancy grows with corner sharpness: 1.84x at
@@ -1579,7 +1721,7 @@ uniform slalom unless a course set is named.
 |---|---|---|
 | §2 corner sharpness, 90° | `docs/data/tuned_90deg.csv` | `--max-speed-sweep --sweep-turns 90 --points 7 --speed-tol 0.0625 --speed-lo 3 --speed-hi 10 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40` |
 | §2 corner sharpness, 60° | `docs/data/tuned_60deg.csv` | as above but `--sweep-turns 60 --speed-lo 8 --speed-hi 14 --speed-cap 25` |
-| §2 corner sharpness, 120° | `docs/data/tuned_60_120deg.csv` | as above but `--sweep-turns 60,120 --speed-lo 3 --speed-hi 12` (the 60° column of this file is **censored at the 12 m/s cap**; use `tuned_60deg.csv`) |
+| §2 corner sharpness, 120° | `docs/data/tuned_60_120deg.csv` | as above but `--sweep-turns 60,120 --speed-lo 3 --speed-hi 12 --speed-cap 12` (the 60° column of this file is **censored at the 12 m/s cap**; use `tuned_60deg.csv`. `--speed-cap 12` was the default when this ran and is recorded explicitly since the default became 25 on 2026-09-11) |
 | §2 pre-tuning sweep (superseded) | `docs/data/pretuning_60_90_120deg.csv` | `--max-speed-sweep --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 --feedforward --max-accel 40` |
 | §2 `--fixed-gains` comparison | `docs/data/pretuning_fixed_gains.csv` | as above plus `--fixed-gains` |
 | §5.2 position-gain scan | `docs/data/gain_scan_att12.csv`, `gain_scan_att12_low.csv` | `--gain-scan --scan-omega 2,3.78,5,7,9,12 --scan-zeta 0.7,1.19,1.6` and `--scan-omega 0.8,1.2,1.6,2.0,2.6,3.2 --scan-zeta 1.0,1.19,1.4` |
@@ -1587,7 +1729,7 @@ uniform slalom unless a course set is named.
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25` |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
-| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`, drawn by `docs/tools/perturbation_figure.py` |
+| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --matrix-gains`, drawn by `docs/tools/perturbation_figure.py`. Regenerated 2026-09-11 with the fixed plant and decoder and full-tensor gains (the last three flags are now the defaults); the pre-fix run it replaced (2026-08-17) is quoted in the §7.2d note. |
 | Report Figure 3, reference vs flown | `docs/data/flight_logs/slalom_{60,90,120}deg.npz` | `--video --turn-deg {60,90,120} --video-half-angle {36.81382,36.81382,20.44145} --video-speed {10.164,8.367,6.648} --completion strict --log-npz <path>`, drawn by `Reports/make_figures.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 
@@ -1624,7 +1766,19 @@ Two conventions worth knowing when reading the CSVs:
 
 ## 8. Open items
 
-1. **Normal-aware plant (§3.2) -- the priority, and more urgent than first judged.**
+1. **Normal-aware plant (§3.2) -- CLOSED 2026-09-11** (fixed 2026-09-10, commit
+   `c088044`). Both reduced plants
+   (`DroneSimulator` and the torch env) now integrate each rotor along its own
+   axis, with CG-relative arms and the full inertia tensor; see
+   [plant_thrust_direction.md](plant_thrust_direction.md) §9. Canted-rotor
+   *simulation* is no longer blocked, but tilt experiments still are, by item 12 (the
+   mixer; item 11, the decoder, closed 2026-09-11); the physics the reduced plant still omits is
+   items 4 (gyroscopic term) and 17 (linearised yaw). **Isaac/PhysX remains the
+   plan (confirmed 2026-09-11)**, but for a different reason than the original
+   entry gives: the reduced plant now models thrust direction correctly, so the
+   case for PhysX is what it still cannot model -- time-varying inertia and joint
+   dynamics while the airframe morphs. The original entry follows, kept as written.
+   *The priority, and more urgent than first judged.*
    Guarded, not fixed. It was originally deprioritised on the reasoning that the
    work would move to Isaac Lab/PhysX anyway -- but the experiments run on the
    reduced plant, so that condition never held (§4.1). Measured 2026-08-19:
@@ -1655,7 +1809,8 @@ Two conventions worth knowing when reading the CSVs:
    cancelled. Under 3% of available torque for the symmetric bodies swept here,
    and exactly zero at the X quad, but it grows with asymmetry and rate. Fixed
    for free by the normal-aware plant work (item 1), which restores the full
-   Euler equation.
+   Euler equation. *(Corrected 2026-09-11: it did not. The plant fix inverts the
+   full tensor but still omits $\Omega\times I\Omega$, so this item stays open.)*
 5. **Repair's contract changes for morphing bodies**: collision-free at `q = 0`
    guarantees nothing across a joint envelope.
 6. **The task is a cliff** at fixed speed (§2) -- nine operating points from 2.0
@@ -1702,3 +1857,62 @@ Two conventions worth knowing when reading the CSVs:
    and introduces speed overshoot and altitude sag, so the loop wants redesigning
    as `a_des = a_ff + Kp·e_p + Kd·e_v` with gains derived for tracking rather
    than point-holding.
+
+11. **The decoder leaked arm pitch into thrust direction -- CLOSED 2026-09-11.**
+   Fixed keeping the absolute convention: the decoder now composes the motor
+   rotation, and the MJCF backend -- which added Euler angles and was off by twice
+   the arm pitch -- composes it too. Level arms decode bit-identically; every
+   elevated-arm genome changes phenotype. See
+   [decoder_thrust_composition.md](decoder_thrust_composition.md) §9. Original
+   entry: (added 2026-09-11).
+   `spherical_angular_to_blueprint` subtracts the arm's Euler angles to make a
+   motor's thrust direction absolute, which cancels only for arm azimuth. Any
+   genome with non-zero arm pitch decodes to a thrust direction it did not ask
+   for: median 7.4° at example 17's ±15° limits, 34.8° (max 178.6°) at the
+   handler's ±90° defaults. Exact at zero elevation, so the azimuth sweep is
+   untouched. Fixing it changes the phenotype of every elevated-arm genome, so it
+   is a search-space decision; see
+   [decoder_thrust_composition.md](decoder_thrust_composition.md).
+12. **The controller's mixer is 4-DOF** (added 2026-09-11). `mixerFM` keeps
+   only the z row of `Bf`, so a deliberately canted rotor (non-zero motor pitch)
+   produces in-plane force the controller can neither command nor account for.
+   The plant now simulates that force correctly; the controller does not model
+   it. Blocks canted-rotor and fully-actuated designs.
+13. **Attitude gains default to the diagonal inertia -- CLOSED 2026-09-11.** Both
+   `--matrix-gains` and `LeeGeometricControl(matrix_gains=...)` now default to the
+   full tensor. Verified identical for every body in the azimuth sweep (products
+   of inertia exactly zero) and bit-identical in flight for the X quad at 60°, 90°
+   and 120°, so no recorded result for that family changes. Original entry: (added 2026-09-11).
+   `--matrix-gains` is off by default. On the fixed plant that mismatches every
+   asymmetric body: the lengthened-arm body flies 9.812 / 7.938 m/s at 60° / 90° with
+   diagonal gains against 10.320 / 8.367 with the full tensor (§7.2c). Pass it for
+   any EA run over asymmetric bodies, or change the default -- a decision, since
+   recorded commands rely on it.
+14. **Unexplained cells in the plant-fix factorial** (added 2026-09-11,
+   [plant_thrust_direction.md](plant_thrust_direction.md) §9): a CG disturbance of
+   at most 3.5% of the available roll moment moves max speed by up to 2.2 m/s; the
+   lengthened arm's CG effect is negative at 60°; and `--matrix-gains` costs it
+   0.156 m/s at 120°.
+15. **`docs/data/perturbation*` predated the plant fix -- CLOSED 2026-09-11.**
+   Regenerated after the decoder and gains decisions; §7.2d's pinned table and
+   note carry the current values. Original entry: (added 2026-09-11).
+   The symmetric row still reproduces exactly; the azimuth and length rows do
+   not (§7.2d note). Regenerate on the current plant -- after settling item 13,
+   since the gains choice changes the asymmetric rows again.
+16. **`--speed-cap` defaulted to 12.0 -- CLOSED 2026-09-11.** The default is now
+   25; across all recorded CSVs only `tuned_60_120deg.csv` ever reached the cap,
+   and its command now records `--speed-cap 12`. Original entry: `--speed-cap`
+   defaulted to 12.0 while every recorded command passes 25
+   (added 2026-09-11). The same trap as the `--speed-tol` default fixed that
+   day: a command copied without the flag behaves differently. It only bites a
+   body that completes at the top of the bracket.
+17. **Yaw drag torque is still the hover linearisation** (added 2026-09-11).
+   Kept deliberately so the plant fix held exact parity; the quadratic form is
+   open, and changing it moves every controller tuning calibrated against the
+   linearised response.
+18. **Torch-env results before 2026-09-10 used a different plant** (added
+   2026-09-11). `TorchDroneGateEnv` unnormalised the motor state with the motor
+   model's minimum (238.49 rad/s for the 5-inch props every sweep flies; the value is prop-size dependent) instead of the normalisation floor, so its
+   dynamics never matched `DroneSimulator`, coplanar or not, despite being
+   documented as a drop-in replacement. Fixed and pinned by a cross-plant test;
+   anything trained through it earlier was trained against a different plant.

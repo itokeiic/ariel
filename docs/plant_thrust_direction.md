@@ -89,6 +89,14 @@ rotor's thrust is allocated by the controller and never applied by the plant.
 That is the difference between a limitation to fix eventually and a bound on
 every EA result the pipeline produces.
 
+> *History note, 2026-09-11:* the EA rows above were sampled through a decoder
+> that leaked arm pitch into thrust direction (docs/decoder_thrust_composition.md).
+> Regenerated after that fix, the example-17 row reads a median tilt of 12.9°
+> (max 15.0°) with 22% of each rotor's thrust in-plane, and the handler-defaults
+> row 78.7° and 98%; the current table is in `docs/drone_morphology_gate_racing.md`
+> §4.1. The conclusion stands: every sampled EA body still tilts, so every EA
+> result was bounded by this plant defect.
+
 ## 5. Why the fix is contained
 
 The correct object already exists one layer up, and is already stored on the
@@ -358,11 +366,12 @@ frozen file, so it pins the intent and stays readable.
 >
 > Implication: with the plant now right, asymmetric bodies should be flown with
 > `--matrix-gains`, or their inertia is modelled correctly in the plant and
-> wrongly in the controller. The gate-racing family is unaffected — its products
+> wrongly in the controller. Since 2026-09-11 `--matrix-gains` is the default. The gate-racing family is unaffected — its products
 > of inertia are identically zero, where full and diagonal gains coincide.
 >
 > Raw output: `__data__/morphology_design_sweep/20260911_112644/`. Committed
-> `docs/data/perturbation*` still hold the pre-fix run and were not overwritten.
+> `docs/data/perturbation*` still hold the pre-fix run and were not overwritten. *(Later on 2026-09-11: regenerated after the
+> decoder and gains decisions; see `docs/drone_morphology_gate_racing.md` §7.2d.)*
 >
 > Original text kept below.
 
