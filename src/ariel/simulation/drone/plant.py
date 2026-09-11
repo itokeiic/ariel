@@ -211,11 +211,16 @@ def moment_allocation(
             ``I^-1 @ Bm`` — the *angular acceleration* each newton of thrust
             produces, rather than the torque. Prefer this for anything about
             agility: torque authority alone is misleading because inertia and
-            authority move together. On a quad swept from a fore-aft to a
-            lateral frame, roll torque rises 1.735 -> 3.896 N·m while roll
-            angular acceleration *falls* 2921 -> 1325 rad/s^2. It also matches
-            the plant, which works in angular acceleration
-            (``dynamics_params`` bakes inertia into ``k_p_signed``).
+            authority move together. Across the feasible X-family
+            (t = 20.44-69.56 deg, Reports/numbers.tex) roll torque rises
+            1.489 -> 3.996 N·m while roll angular acceleration per newton
+            *falls* 313.3 -> 121.3 rad/s^2. (Previously this quoted
+            1.735 -> 3.896 N·m, the t = 24-66 deg span of an earlier sweep, and
+            2921 -> 1325 rad/s^2, whose normalisation could not be reproduced.)
+            It also matches the plant, which since 2026-09-10 integrates
+            ``I^-1 @ M`` from each rotor's geometry with the full inertia tensor
+            (``DroneSimulator``); before that ``dynamics_params`` baked a diagonal
+            inertia into ``k_p_signed``.
     """
     B = allocation_matrix(geom, torque_to_thrust_ratio=torque_to_thrust_ratio)
     Bm = B[3:6, :]

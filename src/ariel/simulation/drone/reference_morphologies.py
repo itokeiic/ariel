@@ -11,11 +11,18 @@ the point: a symmetric perturbation (alternating arm elevation, say) leaves the
 products of inertia at exactly zero, so it fails to exercise the thing these
 bodies exist to exercise.
 
-.. warning::
-   ``elevation`` tilts its rotor's thrust axis out of the body z axis. The
-   reduced plant integrates axial thrust only, so its *flight* results are not
-   physically meaningful -- see ``axial_thrust`` and the open item on
-   normal-aware plants. Its *inertia* results are unaffected and valid.
+.. note::
+   ``elevation`` lifts rotor 0 about 5 cm out of plane with every thrust axis
+   still along body z. Until the 2026-09-11 decoder fix it decoded with an
+   11.37 deg tilt leaked from its arm pitch (docs/decoder_thrust_composition.md),
+   which is why earlier flight tables report it as not flying.
+
+   SUPERSEDED (2026-09-11): this warning read "``elevation`` decodes with its
+   rotor's thrust axis tilted 11.37 deg out of the body z axis, and its flight
+   results are therefore not physically meaningful. That tilt is a decoder
+   defect, not a property of the perturbation". The decoder is fixed; the body
+   decodes axial and its flight results mean what they say.
+   SUPERSEDED (2026-09-10): before that it blamed the plant, fixed that day.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ COL_LENGTH, COL_ARM_AZ, COL_ARM_EL, COL_MOTOR_AZ, COL_MOTOR_PITCH, COL_SPIN = ra
 
 @dataclass(frozen=True)
 class ReferenceMorphology:
-    """One airframe, with what it perturbs and whether the plant can fly it."""
+    """One airframe, with what it perturbs and whether its flight result means what it says."""
 
     key: str
     label: str
@@ -47,7 +54,17 @@ class ReferenceMorphology:
 
     @property
     def flight_is_trustworthy(self) -> bool:
-        """False when the reduced plant would mis-simulate this body."""
+        """False when this body decodes with tilted thrust.
+
+        Since the 2026-09-10 plant fix the plant simulates tilt correctly, so
+        this no longer means the plant cannot fly the body. Since the
+        2026-09-11 decoder fix every body in this family decodes axial; the
+        ``elevation`` body's earlier tilt was leaked by the decoder
+        (docs/decoder_thrust_composition.md).
+
+        SUPERSEDED 2026-09-11: previously "False when the reduced plant would
+        mis-simulate this body."
+        """
         return self.axial_thrust
 
 
@@ -101,8 +118,9 @@ def reference_morphologies(
             "while leaving Ixx - Iyy unchanged"),
         ReferenceMorphology(
             "elevation", f"arm 0 elevated {elevation_deg:g} deg (out of plane)",
-            elevation, False,
-            "lifts the rotor out of plane AND tilts its thrust axis, which the "
-            "reduced axial-thrust plant does not simulate"),
+            elevation, True,
+            "lifts the rotor out of plane with every thrust axis still along "
+            "body z (motor_pitch=0). Before the 2026-09-11 decoder fix it decoded "
+            "with an 11.37 deg spurious tilt; see docs/decoder_thrust_composition.md"),
     ]
     return {m.key: m for m in out}

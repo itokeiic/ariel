@@ -4,17 +4,27 @@
     uv run --no-sync python docs/tools/speed_semantics.py
 
 `--speed` sets `total_time = startup + path_length / speed`, where
-`path_length` is the POLYLINE through the waypoints. Two things then separate
-that number from the speed the drone flies through a gate:
+`path_length` is the POLYLINE through the waypoints. The speed a gate is
+actually crossed at is lower, by two independent factors that multiply:
 
-1. the interpolating spline does not follow the polyline -- it must pass
-   through every waypoint and bows outside the straight legs between them, so
-   its arc length is slightly LONGER, not shorter; and
-2. far more importantly, it is parameterised uniformly in `u`, not by arc
-   length. World speed is `|dP/du| * du/dt`, and on a clamped spline `|dP/du|`
-   is much larger near the ends than in the middle, so a constant `du/dt`
-   starves the middle of the course -- where every gate is -- and sprints the
-   final span.
+1. **Startup accounting** -- dominant at gentle turns. The spline is traversed
+   over the WHOLE `total_time`, ramp included, not over the `path/speed` cruise
+   window the formula suggests. Mean speed along the path is therefore
+   `arc / total_time`, short of `speed` by `(1 + startup*speed/path)*(path/arc)`.
+   The second term is the interpolating spline bowing outside the polyline
+   (arc is slightly LONGER, not shorter), which is small and conservative.
+2. **Non-uniform parameterisation** -- dominant at sharp turns. The spline is
+   parameterised uniformly in `u`, not by arc length. World speed is
+   `|dP/du| * du/dt`, and `|dP/du|` runs ~1.5x its mean near the clamped ends
+   against ~0.85x through the interior, so at a constant `du/dt` the gates are
+   geared low while the final span -- which lies past the last gate -- sprints.
+
+SUPERSEDED (2026-08-19): this file previously attributed the whole shortfall to
+factor 2 and did not account for factor 1, which is the larger of the two at 60
+and 90 degrees (1.75 of the 1.84x total at 60 degrees, where factor 2 is only
+1.05). The measured gate speeds were correct; the explanation was not. The
+`startup_factor` / `gearing_factor` columns below decompose it, and their
+product reproduces the reported ratio.
 
 Everything here is a property of the reference trajectory alone -- no rollout,
 so it is cheap and cannot drift with the plant or the controller.
@@ -67,16 +77,27 @@ def measure(turn: float, nominal: float) -> dict:
     n_missed = sum(1 for c in scored if not c.passed)
 
     cruise = ts > STARTUP
+    # The shortfall factors into two independent causes that multiply. `mean` is
+    # the speed the path is actually covered at; `startup_factor` is how far the
+    # nominal figure sits above it (the ramp is inside total_time, and the arc is
+    # longer than the polyline the nominal divides); `gearing_factor` is how far
+    # the gates sit below that mean (uniform-in-u parameterisation).
+    mean = arc / traj.total_time
+    gate_med = float(np.median(at_gates))
     return {
         "turn": turn,
         "nominal": nominal,
         "polyline": float(course.path_length),
         "arc": arc,
+        "total_time": float(traj.total_time),
+        "mean": mean,
         "gate_lo": float(at_gates.min()),
-        "gate_med": float(np.median(at_gates)),
+        "gate_med": gate_med,
         "gate_hi": float(at_gates.max()),
         "peak": float(speeds[cruise].max()),
-        "ratio": float(nominal / np.median(at_gates)),
+        "startup_factor": float(nominal / mean),
+        "gearing_factor": float(mean / gate_med),
+        "ratio": float(nominal / gate_med),
         "ref_missed": n_missed,
     }
 
@@ -93,8 +114,22 @@ def table(rows: list[dict]) -> str:
             f"{r['arc']:.2f} m | {r['gate_lo']:.2f} / {r['gate_med']:.2f} / "
             f"{r['gate_hi']:.2f} m/s | {r['peak']:.1f} m/s | "
             f"{r['ratio']:.2f}x |")
+    lines += [
+        "",
+        "Decomposition of that last column into its two independent causes:",
+        "",
+        "| course | total_time | mean = arc/total_time | startup accounting | parameterisation | product | reported |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| {r['turn']:.0f}° | {r['total_time']:.3f} s | {r['mean']:.3f} m/s | "
+            f"{r['startup_factor']:.2f}x | {r['gearing_factor']:.2f}x | "
+            f"{r['startup_factor'] * r['gearing_factor']:.2f}x | {r['ratio']:.2f}x |")
     assert all(r["ref_missed"] == 0 for r in rows), (
         "the reference itself misses a gate -- the interpolation fit is broken")
+    assert all(abs(r["startup_factor"] * r["gearing_factor"] - r["ratio"]) < 5e-3
+               for r in rows), "the two factors must reproduce the reported ratio"
     return "\n".join(lines) + "\n"
 
 

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""How much of the EA's search space the axial-thrust plant cannot simulate.
+"""How much of the EA's search space decodes to tilted thrust.
+
+HISTORY (2026-09-10): written against the pre-fix plant, which applied every
+rotor's thrust along one body axis, so the table measured a simulation error
+and its last column is still named "thrust not simulated". The plant now
+honours each rotor's normal, so read it as how much of the search space depends
+on tilt being modelled. For bodies with non-zero arm pitch the tilt includes
+direction leaked by the decoder rather than asked for by the genome
+(docs/decoder_thrust_composition.md).
 
     uv run --no-sync python docs/tools/thrust_tilt_exposure.py
 

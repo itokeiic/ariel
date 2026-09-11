@@ -39,6 +39,22 @@ def _rpy_to_R(roll: float, pitch: float, yaw: float) -> np.ndarray:
     return Rz @ Ry @ Rx
 
 
+def _R_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
+    """Inverse of :func:`_rpy_to_R`: rotation matrix -> ZYX (roll, pitch, yaw).
+
+    Pitch is taken in [-pi/2, pi/2]. At the gimbal singularity (|pitch| = pi/2)
+    roll and yaw are not separable; roll is set to 0 and yaw absorbs the rest,
+    which still reproduces ``R`` exactly.
+    """
+    R = np.asarray(R, dtype=float)
+    cp = math.hypot(float(R[0, 0]), float(R[1, 0]))
+    pitch = math.atan2(-float(R[2, 0]), cp)
+    if cp < 1e-9:
+        return 0.0, pitch, math.atan2(-float(R[0, 1]), float(R[1, 1]))
+    return (math.atan2(float(R[2, 1]), float(R[2, 2])), pitch,
+            math.atan2(float(R[1, 0]), float(R[0, 0])))
+
+
 def blueprint_to_propellers(
     bp: DroneBlueprint,
     *,
@@ -218,12 +234,23 @@ def blueprint_to_mjspec(
             # we leave the site's orientation matching the parent arm tip
             # for the canonical zero-pitch case.
             #
-            # To keep things robust for tilted thrusters, we compose the
-            # motor's rpy on top of the arm's orientation:
+            # Compose the motor's local orientation on top of the arm's, as the
+            # propellers, URDF and USD backends do. This used to ADD Euler
+            # angles (pitch + arm pitch, yaw + arm yaw), which is exact only
+            # while the arm's rotation is purely about z. For an elevated arm it
+            # put the thrust axis twice the arm pitch away from the intended one
+            # (measured 30.0 deg for a 15 deg arm), because the decoder stores
+            # arm pitch negated. The additive form is kept for a level arm,
+            # where it is exact, so planar models are unchanged to the bit.
+            # See docs/decoder_thrust_composition.md.
             mr_roll, mr_pitch, mr_yaw = motor.pose.rpy
-            site_quat = _rpy_to_quat(mr_roll,
-                                     mr_pitch + arm_pitch,  # cancel arm tilt
-                                     mr_yaw + arm_yaw)
+            if arm.pose.rpy[0] == 0.0 and arm_pitch == 0.0:
+                site_quat = _rpy_to_quat(mr_roll,
+                                         mr_pitch + arm_pitch,
+                                         mr_yaw + arm_yaw)
+            else:
+                site_quat = list(_R_to_quat(
+                    _rpy_to_R(*arm.pose.rpy) @ _rpy_to_R(*motor.pose.rpy)))
 
             motor_body = arm_body.add_body(
                 name=f"{body_name}_motor_{motor_id}",

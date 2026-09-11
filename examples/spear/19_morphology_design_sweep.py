@@ -24,10 +24,10 @@ rotation, 0.011 across a 3x arm-length change). Four reasons, all addressed:
   Replaced by per-axis angular acceleration plus airevolve's maneuverability.
 
 Why azimuth and length are the honest axes to sweep here: ``DroneSimulator``'s
-plant reads each rotor's ``loc`` but ignores its thrust normal (see
-``dynamics_params._guard_axial_thrust``). Both axes move exactly what the plant
-models and leave the normals axial, so the guard stays silent for every body
-below. Arm elevation and motor cant would not be trustworthy until the plant is
+plant used to read each rotor's ``loc`` but ignore its thrust normal. Both axes
+move exactly what the plant modelled and leave the normals axial, so this sweep
+was unaffected by that defect -- and is unaffected by its fix (2026-09-10, see
+docs/plant_thrust_direction.md §9) for the same reason. Arm elevation and motor cant would not be trustworthy until the plant is
 normal-aware.
 
 Run:
@@ -138,13 +138,19 @@ parser.add_argument("--asym-deg", type=float, default=0.0,
                          "the bilateral symmetry. An asymmetric body has non-zero "
                          "products of inertia, which is where diagonal and matrix "
                          "gains diverge -- and is what an EA will produce.")
-parser.add_argument("--matrix-gains", action="store_true",
+parser.add_argument("--matrix-gains", action=argparse.BooleanOptionalAction, default=True,
                     help="derive attitude gains from the FULL inertia tensor "
-                         "rather than its diagonal. Exact for any airframe; "
-                         "with the diagonal form an asymmetric body gets a "
-                         "different effective bandwidth per axis (23.37-24.69 "
-                         "rad/s against a 24 target for one arm moved 30 deg), "
-                         "which would confound an EA over asymmetric bodies.")
+                         "(default) rather than its diagonal; the no- form "
+                         "restores the diagonal. Identical on bodies with zero "
+                         "products of inertia, e.g. the swept family (verified "
+                         "bit-identical in flight for the X quad). On an "
+                         "asymmetric body the diagonal form spreads the "
+                         "closed-loop natural frequency across modes (22.66-25.60 "
+                         "rad/s against a 24 target for one arm swept 30 deg, "
+                         "22.40-26.00 for one arm lengthened; docs section 7.2c) "
+                         "and no longer matches the plant, which integrates the "
+                         "full tensor since 2026-09-10. Default was off until "
+                         "2026-09-11.")
 parser.add_argument("--att-omega-n", type=float, default=12.0,
                     help="attitude-loop bandwidth. The position optimum tracks "
                          "this: raising it should permit a stiffer position "
@@ -171,8 +177,9 @@ parser.add_argument("--max-speed-sweep", action="store_true",
 parser.add_argument("--sweep-turns", default="60,90,120")
 parser.add_argument("--speed-lo", type=float, default=2.0)
 parser.add_argument("--speed-hi", type=float, default=6.0)
-parser.add_argument("--speed-tol", type=float, default=0.125)
-parser.add_argument("--speed-cap", type=float, default=12.0)
+parser.add_argument("--speed-tol", type=float, default=0.0625)
+# Default was 12.0 until 2026-09-11; every recent recorded command passed 25.
+parser.add_argument("--speed-cap", type=float, default=25.0)
 parser.add_argument("--calibrate", action="store_true",
                     help="grid over speed x turn angle, evaluating a few "
                          "morphologies at each point. Picks the operating point "
@@ -280,8 +287,10 @@ def make_genome(half_angle: float, arm_length: float = ARM_LENGTH) -> np.ndarray
     """Bilaterally symmetric quad: arms at +/-t and 180 +/- t.
 
     Columns: [length, arm_az, arm_elevation, motor_az, motor_pitch, spin].
-    Elevation and motor pitch stay 0, so thrust normals remain axial and the
-    reduced plant models this airframe correctly.
+    Elevation and motor pitch stay 0, so thrust normals are axial. That also
+    keeps this family clear of the decoder's arm-pitch leak, which is exact at
+    zero elevation (docs/decoder_thrust_composition.md). Since 2026-09-10 the
+    plant models tilted rotors too; this family simply has none.
     """
     az = np.array([half_angle, np.pi - half_angle, np.pi + half_angle, -half_angle])
     if args.asym_deg:
@@ -1025,7 +1034,10 @@ def perturbation_sweep() -> list[dict]:
                 "alpha_roll": geo["alpha_roll"], "alpha_pitch": geo["alpha_pitch"],
                 "note": m.note,
             })
-            warn = "" if m.axial_thrust else "  [red]NON-AXIAL: plant invalid[/red]"
+            # Since the 2026-09-10 plant fix a non-axial body is simulated
+            # correctly; for this family the tilt itself is the decoder's
+            # arm-pitch leak, not the genome (docs/decoder_thrust_composition.md).
+            warn = "" if m.axial_thrust else "  [red]NON-AXIAL: decoder tilt, not the genome[/red]"
             console.log(f"  {m.key:<10} {r['max_speed']:6.3f} m/s  "
                         f"trk {r['tracking_err']:5.3f}  "
                         f"clip {100 * r['saturation_lo']:4.1f}%  "

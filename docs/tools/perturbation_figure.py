@@ -61,7 +61,10 @@ def draw(ax, m, speeds: dict[float, str]) -> None:
 
 
 def markdown(data, fam, turns) -> str:
-    head = "| perturbation | " + " | ".join(f"{t:.0f}° max speed" for t in turns) + " | plant |"
+    # Column was "plant" with "**not simulated**" for non-axial bodies, from the
+    # pre-2026-09-10 plant. The plant now simulates tilt; in the reference family
+    # the only tilt is the decoder's arm-pitch leak.
+    head = "| perturbation | " + " | ".join(f"{t:.0f}° max speed" for t in turns) + " | thrust |"
     lines = [head, "|---" * (len(turns) + 2) + "|"]
     for m in fam.values():
         cells = []
@@ -69,7 +72,7 @@ def markdown(data, fam, turns) -> str:
             r = data.get((m.key, t))
             v = float(r["max_speed"]) if r else float("nan")
             cells.append("did not fly" if v != v else f"{v:.3f} m/s")
-        ok = "axial" if m.axial_thrust else "**not simulated**"
+        ok = "axial" if m.axial_thrust else "**tilted by decoder**"
         lines.append(f"| {m.label} | " + " | ".join(cells) + f" | {ok} |")
     return "\n".join(lines) + "\n"
 

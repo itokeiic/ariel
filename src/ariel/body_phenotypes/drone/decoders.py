@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import numpy as np
 
-from ariel.body_phenotypes.drone.backends import blueprint_to_propellers
+from ariel.body_phenotypes.drone.backends import _R_to_rpy, _rpy_to_R, blueprint_to_propellers
 
 from .blueprint import (
     DroneBlueprint,
@@ -60,11 +60,24 @@ def spherical_angular_to_blueprint(
         )
         arm_id = bp.add(ArmNode(length=mag, pose=arm_pose), parent=core_id)
 
-        # Motor pose: at arm tip (local +X by `length`), with thrust direction
-        # encoded as rpy that — when composed with the arm's frame — yields the
-        # genome's world-frame (motor_az, motor_pitch). For the demo we store
-        # the relative offset literally; the backend collapses the chain.
-        motor_local_rpy = (0.0, motor_pitch - arm_pitch, motor_az - arm_az)
+        # Motor pose: at the arm tip (local +X by `length`). Its rpy is LOCAL to
+        # the arm, and backends compose R_arm @ R_local, so it must be the
+        # rotation that turns the arm's frame into the world orientation the
+        # genome asks for, R(0, motor_pitch, motor_az).
+        if arm_pitch == 0.0:
+            # Every rotation involved is about z, so subtracting the arm's
+            # azimuth inverts it exactly. Kept verbatim so planar genomes -- all
+            # published results -- decode bit-identically.
+            motor_local_rpy = (0.0, motor_pitch - arm_pitch, motor_az - arm_az)
+        else:
+            # Subtracting Euler angles inverts only commuting rotations, and
+            # pitch does not commute with the yaws around it. That leaked arm
+            # pitch into thrust direction -- a median 7.4 deg at +/-15 deg arm
+            # elevation, up to 178.6 deg at +/-90 -- until 2026-09-11
+            # (docs/decoder_thrust_composition.md). Compose the rotation instead.
+            R_arm = _rpy_to_R(0.0, -arm_pitch, arm_az)
+            R_world = _rpy_to_R(0.0, motor_pitch, motor_az)
+            motor_local_rpy = _R_to_rpy(R_arm.T @ R_world)
         motor_pose = Pose(xyz=(mag, 0.0, 0.0), rpy=motor_local_rpy)
         spin = "cw" if direction >= 0.5 else "ccw"
         motor_id = bp.add(

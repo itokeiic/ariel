@@ -1,5 +1,9 @@
 """Fly the `elevation` reference body with the thrust direction its genome asks for.
 
+SUPERSEDED 2026-09-11: the decoder is fixed, so this probe's correction now equals
+the decoder's own output. Kept only to reproduce the 2026-09-10 table in
+docs/decoder_thrust_composition.md section 5.
+
 The decoder compensates a motor's pose by subtracting the arm's Euler angles
 (decoders.py:67). That cancels exactly for arm azimuth, which is a pure
 z-rotation, but not for arm pitch, which introduces a non-commuting y-rotation.
