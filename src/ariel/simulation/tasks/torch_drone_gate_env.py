@@ -41,7 +41,7 @@ _W_RANGE = float(W_MAX_N - W_MIN_N)   # 3000.0
 # The dynamics body is a plain module-level function so torch.compile sees
 # the same Python function object on every call, regardless of which
 # morphology (individual) is being evaluated.  Per-morphology parameters
-# (k_w, k_p, …) are passed as explicit tensor arguments rather than being
+# (k_x, B_force, …) are passed as explicit tensor arguments rather than being
 # captured in a per-individual closure; this means the compiled graph is
 # traced once and reused across all individuals with the same motor count.
 
@@ -49,7 +49,6 @@ def _dynamics_body(
     state:  torch.Tensor,   # (12+N, E)
     action: torch.Tensor,   # (N, E)
     # ---- scalar params (0-d tensors, morphology-specific) ----
-    k_w:  torch.Tensor,
     k_x:  torch.Tensor,
     k_y:  torch.Tensor,
     tau:  torch.Tensor,
@@ -58,11 +57,15 @@ def _dynamics_body(
     w_hi: torch.Tensor,
     g:    torch.Tensor,
     W_R:  torch.Tensor,
-    # ---- per-motor params ((N,1) tensors) ----
-    k_p:  torch.Tensor,
-    k_q:  torch.Tensor,
-    k_r:  torch.Tensor,
-    k_rr: torch.Tensor,
+    # ---- rotor geometry, precomputed ((3,N,1) tensors) ----
+    # Each folds the constant part of one term so the hot path stays a
+    # broadcast-and-sum; see `make_dynamics` for how they are built.
+    B_force:   torch.Tensor,   # k_f * n_i                      -> force  (W^2)
+    B_mom_sq:  torch.Tensor,   # k_f * (r_i x n_i)              -> moment (W^2)
+    B_mom_lin: torch.Tensor,   # spin_i * 2*k_m*W_hover * n_i   -> moment (W)
+    B_mom_dw:  torch.Tensor,   # spin_i * k_r_react*Izz * n_i   -> moment (dW)
+    I_inv:     torch.Tensor,   # (3,3) inverse inertia tensor
+    mass:      torch.Tensor,   # 0-d
 ) -> torch.Tensor:
     """Vectorised drone dynamics — state_dot = f(state, action, params).
 
@@ -101,7 +104,14 @@ def _dynamics_body(
     vby = R01 * vx + R11 * vy + R21 * vz
 
     # ---- motor model ----------------------------------------------------
-    W   = (w + 1.0) * (0.5 * W_R) + w_lo              # (N, E)  rad/s
+    # The motor STATE is normalised against (W_MIN_N, W_MAX_N), which are
+    # normalisation constants, not the motor's physical limits. This used to
+    # add `w_lo` (params["w_min"] = 238.49 rad/s, the motor model's minimum)
+    # instead of W_MIN_N (0.0), so every motor speed here sat 238.49 rad/s
+    # above the value DroneSimulator computes from the same state -- the two
+    # plants never agreed. `w_lo` still belongs in `Wc` below, which is the
+    # motor command curve. Fixed 2026-09-10; see the parity test.
+    W   = (w + 1.0) * (0.5 * W_R) + W_MIN_N           # (N, E)  rad/s
     U   = ((action + 1.0) * 0.5).clamp(0.0, 1.0)      # (N, E)  ∈ [0,1]
     sq_arg = (k_sq * U * U + (1.0 - k_sq) * U).clamp(min=0.0)
     Wc  = (w_hi - w_lo) * sq_arg.sqrt() + w_lo        # (N, E)
@@ -111,23 +121,37 @@ def _dynamics_body(
     # ---- aggregate motor quantities -------------------------------------
     W2     = W * W
     sum_W  = W.sum(dim=0)
-    sum_W2 = W2.sum(dim=0)
 
-    # ---- forces ---------------------------------------------------------
-    T  = -k_w * sum_W2
+    # ---- aerodynamic drag (body frame, already an acceleration) ---------
     Dx = -k_x * vbx * sum_W
     Dy = -k_y * vby * sum_W
 
-    # ---- moments --------------------------------------------------------
-    Mx = (k_p  * W2).sum(dim=0)
-    My = (k_q  * W2).sum(dim=0)
-    Mz = (k_r  * W ).sum(dim=0) + (k_rr * dW).sum(dim=0)
+    # ---- rotor force and moment, along each rotor's OWN thrust axis -----
+    # This used to be `T = -k_w * sum_W2` on body z alone, so a canted rotor
+    # produced the same z-force as an upright one and no in-plane force, while
+    # the controller's mixerFM allocated it as tilted. Mirrors the fix in
+    # DroneSimulator; see docs/plant_thrust_direction.md.
+    W2_b = W2.unsqueeze(0)                      # (1,N,E)
+    W_b  = W.unsqueeze(0)
+    dW_b = dW.unsqueeze(0)
+    F_body = (B_force * W2_b).sum(dim=1)        # (3,E)  newtons
+    M_body = ((B_mom_sq * W2_b)
+              + (B_mom_lin * W_b)
+              + (B_mom_dw * dW_b)).sum(dim=1)   # (3,E)  newton-metres
+
+    # Full inertia tensor, so the body axes need not be principal.
+    Omega_dot = I_inv @ M_body                  # (3,3)@(3,E) -> (3,E)
+    Mx, My, Mz = Omega_dot[0], Omega_dot[1], Omega_dot[2]
 
     # ---- translational kinematics / dynamics ----------------------------
     d_x,  d_y,  d_z  = vx, vy, vz
-    d_vx = R00 * Dx + R01 * Dy + R02 * T
-    d_vy = R10 * Dx + R11 * Dy + R12 * T
-    d_vz = g   + R20 * Dx + R21 * Dy + R22 * T
+    # Body-frame acceleration: drag plus thrust (a force, hence /mass).
+    ax_b = Dx + F_body[0] / mass
+    ay_b = Dy + F_body[1] / mass
+    az_b = F_body[2] / mass
+    d_vx = R00 * ax_b + R01 * ay_b + R02 * az_b
+    d_vy = R10 * ax_b + R11 * ay_b + R12 * az_b
+    d_vz = g   + R20 * ax_b + R21 * ay_b + R22 * az_b
 
     # ---- Euler-angle kinematics (ZYX) -----------------------------------
     d_phi   = p + (q * sphi + r * cphi) * tanth
@@ -172,7 +196,6 @@ def _build_torch_dynamics(
         return torch.tensor(v, device=device, dtype=dtype)
 
     # Build parameter tensors for this morphology.
-    p_k_w  = _t(params["k_w"])
     p_k_x  = _t(params["k_x"])
     p_k_y  = _t(params["k_y"])
     p_tau  = _t(params["tau"])
@@ -181,10 +204,32 @@ def _build_torch_dynamics(
     p_w_hi = _t(params["w_max"])
     p_g    = _t(gravity)
     p_W_R  = _t(_W_RANGE)
-    p_k_p  = _t(params["k_p_signed"]).view(num_motors, 1)
-    p_k_q  = _t(params["k_q_signed"]).view(num_motors, 1)
-    p_k_r  = _t(params["k_r_signed"]).view(num_motors, 1)
-    p_k_rr = _t(params["k_r_react_signed"]).view(num_motors, 1)
+    # Rotor geometry. Each rotor contributes thrust f_i = k_f*W_i^2 along its
+    # own unit axis n_i, and a moment r_i x (f_i n_i) = f_i (r_i x n_i) about
+    # the CG. Because f_i is a scalar, (r_i x n_i) is constant and the whole
+    # per-rotor term collapses to a coefficient times W^2, W or dW -- so these
+    # can be precomputed once and the hot path stays a broadcast-and-sum.
+    dirs = np.asarray(params["rotor_dirs"], dtype=float)      # (N,3) unit
+    arms = np.asarray(params["rotor_arms"], dtype=float)      # (N,3) about CG
+    spins = np.asarray(params["rotor_spins"], dtype=float)    # (N,) +1 cw
+    k_f = float(params["k_f"])
+    k_m = float(params["k_m"])
+    W_hover = float(params["W_hover"])
+    inertia = np.asarray(params["inertia"], dtype=float)
+    # k_r_react is the reference's ANGULAR-ACCELERATION coefficient, not a
+    # torque one (k_r_react_signed carried no 1/Izz), so scale by Izz to make
+    # it a torque that survives I^-1 unchanged.
+    izz = float(inertia[2, 2])
+
+    def _geom(v):                     # (N,3) -> (3,N,1) tensor
+        return _t(np.ascontiguousarray(v.T)).view(3, num_motors, 1)
+
+    p_B_force = _geom(k_f * dirs)
+    p_B_mom_sq = _geom(k_f * np.cross(arms, dirs))
+    p_B_mom_lin = _geom((spins * 2.0 * k_m * W_hover)[:, None] * dirs)
+    p_B_mom_dw = _geom((spins * float(params["k_r_react"]) * izz)[:, None] * dirs)
+    p_I_inv = _t(np.linalg.inv(inertia))
+    p_mass = _t(float(params["mass"]))
 
     # Choose compiled vs. plain depending on device.
     _fn = _dynamics_body_compiled if device.type == "cuda" else _dynamics_body
@@ -192,8 +237,8 @@ def _build_torch_dynamics(
     def dynamics(state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return _fn(
             state, action,
-            p_k_w, p_k_x, p_k_y, p_tau, p_k_sq, p_w_lo, p_w_hi, p_g, p_W_R,
-            p_k_p, p_k_q, p_k_r, p_k_rr,
+            p_k_x, p_k_y, p_tau, p_k_sq, p_w_lo, p_w_hi, p_g, p_W_R,
+            p_B_force, p_B_mom_sq, p_B_mom_lin, p_B_mom_dw, p_I_inv, p_mass,
         )
 
     return dynamics

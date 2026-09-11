@@ -5,6 +5,16 @@ Reference-form symbolic dynamics. Mirrors
 `optimal_quad_control_RL/quad_race_env.py:22-103` (the sysid'd 5-inch
 canonical model) but parameterized by airevolve's morphology.
 
+STATUS (2026-09-10): the rotor wrench is no longer built from the reference
+form's per-motor scalars. Each rotor contributes thrust along its own axis
+(``params["rotor_dirs"]``) with a moment arm about the CG
+(``params["rotor_arms"]``), and angular acceleration uses the full inertia
+tensor. Motor lag, the sqrt-polynomial command, drag and the hover-linearised
+yaw drag torque are kept, so for a coplanar body the dynamics are unchanged --
+pinned at exact parity by tests/unit/test_simulation/test_plant_thrust_direction.py.
+No gyroscopic term (Omega x I Omega) is integrated. See
+docs/plant_thrust_direction.md.
+
 Per-step parity against the reference was claimed at machine precision
 (<1e-9 rel err) via `unit_tests/test_dynamics_parity.py`, and the migration
 recorded in `experimentation/RUNTIME_DYNAMICS_MIGRATION.md` /
@@ -16,6 +26,10 @@ has ever been in its history. The parity claims are therefore *unverified
 provenance*, not verification: nothing here can reproduce them, and no test
 guards this module's behaviour. Write a characterisation test before
 changing the dynamics.
+
+SUPERSEDED IN PART (2026-09-10): the characterisation test exists
+(tests/unit/test_simulation/test_plant_thrust_direction.py). The provenance of
+the original reference form remains unverified.
 """
 
 import warnings
@@ -54,9 +68,12 @@ class DroneSimulator:
     `dynamics_func(full_state, action) → full_state_dot` is lambdified;
     motor model (sqrt-poly mapping + first-order lag) is baked in.
 
-    The reference's `Bf, Bm` allocation matrices are kept as decorative
-    attributes for API compatibility with consumers that read them; the
-    new dynamics path uses per-motor coefficients in `self.params` instead.
+    The `Bf, Bm` allocation matrices are not used by the dynamics, but they are
+    not decorative either: `get_params()` builds the controller's `mixerFM` from
+    them (the z row of `Bf` and all of `Bm`). The dynamics integrate the rotor
+    geometry in `self.params` (`rotor_dirs`, `rotor_arms`, `rotor_spins`).
+    SUPERSEDED 2026-09-11: this paragraph called them decorative and said the
+    dynamics used per-motor coefficients.
     """
 
     def __init__(self, propellers=None, mountpoints=None, dt=0.005, gravity=9.81,
@@ -92,9 +109,9 @@ class DroneSimulator:
 
         self.config = DroneConfiguration(propellers, payload_mass=payload_mass)
 
-        # Decorative — kept for API compatibility with consumers that read
-        # them (e.g., scripts using get_params for the legacy controller).
-        # The dynamics_func uses `self.params` (per-motor coefficients) instead.
+        # Not used by the dynamics, but get_params() builds the controller's
+        # mixerFM from them. The dynamics_func integrates the rotor geometry in
+        # `self.params` (rotor_dirs, rotor_arms, rotor_spins) instead.
         self.Bf, self.Bm = self.config.get_allocation_matrices()
         self.num_motors = self.config.num_motors
         self.mass = self.config.mass
@@ -113,6 +130,7 @@ class DroneSimulator:
             inertia=np.asarray(self.inertia),
             prop_size=prop_size,
             gravity=gravity,
+            center_of_gravity=np.asarray(self.config.cg, dtype=float),
         )
 
         self.dt = dt
@@ -156,18 +174,21 @@ class DroneSimulator:
     def _setup_dynamics(self):
         """Build the lambdified reference-form dynamics function.
 
-        Mirrors `experimentation/reference_drone_sim.py:_build_dynamics_func`
-        but generalized to N motors via `self.params` (per-motor signed
-        coefficients computed by `derive_reference_params`). Per-step parity
-        against the reference for the canonical 4-motor 2-inch quad was claimed
-        via `unit_tests/test_dynamics_parity.py`, which is not present -- see
-        the module docstring.
+        Originally mirrored `experimentation/reference_drone_sim.py:_build_dynamics_func`
+        via per-motor signed coefficients. Since 2026-09-10 the rotor force and
+        moment come from each rotor's own thrust axis and CG-relative arm in
+        `self.params`, with the full inertia tensor; parity with the old
+        coefficient form is exact for a coplanar body and pinned by
+        tests/unit/test_simulation/test_plant_thrust_direction.py. (The earlier
+        per-step parity claim against `unit_tests/test_dynamics_parity.py` was
+        never verifiable -- see the module docstring.)
 
         The lambdified function has signature
         `(full_state[12+N], action[N]) → full_state_dot[12+N]`. Motor model
         (sqrt-poly mapping U → Wc, then first-order lag dW = (Wc-W)/tau) is
-        baked in. F and M are treated as accelerations directly — mass and
-        inertia are absorbed into the per-motor coefficients.
+        baked in. Rotor thrust is a force divided by mass; rotor moments are
+        torques mapped through the full inverse inertia. Drag enters as an
+        acceleration, as before.
         """
         n = self.num_motors
 
@@ -197,13 +218,8 @@ class DroneSimulator:
         U = [(u_i + 1) / 2 for u_i in control_syms]
 
         p_dict = self.params
-        k_w = p_dict["k_w"]
         k_x = p_dict["k_x"]
         k_y = p_dict["k_y"]
-        k_p_signed = p_dict["k_p_signed"]
-        k_q_signed = p_dict["k_q_signed"]
-        k_r_signed = p_dict["k_r_signed"]
-        k_r_react_signed = p_dict["k_r_react_signed"]
         tau = p_dict["tau"]
         k = p_dict["k"]
         w_min = p_dict["w_min"]
@@ -216,31 +232,70 @@ class DroneSimulator:
         # Convert dW (rad/s²) back to normalized derivative (1/s).
         d_w = [d_W_i / (W_MAX_N - W_MIN_N) * 2 for d_W_i in d_W]
 
-        # Forces (treated as accelerations directly — mass implicit in k_w).
+        # Aerodynamic drag (accelerations, as before).
         sum_W = sum(W)
-        sum_W2 = sum(W_i**2 for W_i in W)
-        T = -k_w * sum_W2
         Dx = -k_x * vbx * sum_W
         Dy = -k_y * vby * sum_W
 
-        # Moments (treated as angular accelerations directly — inertia
-        # absorbed into k_p/k_q/k_r). Signs are baked into the per-motor
-        # coefficients by derive_reference_params (so the symbolic build
-        # is morphology-agnostic).
-        Mx = sum(k_p_signed[i] * W[i]**2 for i in range(n))
-        My = sum(k_q_signed[i] * W[i]**2 for i in range(n))
-        Mz = (
-            sum(k_r_signed[i] * W[i] for i in range(n))
-            + sum(k_r_react_signed[i] * d_W[i] for i in range(n))
-        )
+        # Rotor forces and moments, built from each rotor's TRUE thrust axis.
+        #
+        # Previously the only rotor-derived body force was a scalar on z
+        # (T = -k_w*sum W^2), so a tilted rotor contributed as much z-force as
+        # an upright one and no in-plane force at all, while the controller
+        # allocated it as tilted. Both now use the same geometry.
+        #
+        # Parity with the old form is exact for a coplanar body: with
+        # n_i = (0,0,-1) and f_i = k_f*W_i^2, the force is (0,0,-k_f*sum W^2)
+        # = m*T, and r_i x f_i*n_i = (-y_i f_i, +x_i f_i, 0), which is what
+        # k_p_signed/k_q_signed encode. The z arm drops out of that cross
+        # product, so CG-correcting the arm does not disturb it either.
+        dirs = p_dict["rotor_dirs"]
+        arms = p_dict["rotor_arms"]
+        spins = p_dict["rotor_spins"]
+        k_f = p_dict["k_f"]
+        k_m = p_dict["k_m"]
+        W_hover = p_dict["W_hover"]
+        k_r_react = p_dict["k_r_react"]
+        mass = p_dict["mass"]
+        Izz_ref = float(np.asarray(p_dict["inertia"], dtype=float)[2, 2])
+
+        F_body = Matrix([0, 0, 0])
+        M_body = Matrix([0, 0, 0])
+        for i in range(n):
+            n_i = Matrix([float(c) for c in dirs[i]])
+            r_i = Matrix([float(c) for c in arms[i]])
+            thrust_i = k_f * W[i]**2                      # N, along n_i
+            F_body += thrust_i * n_i
+            M_body += r_i.cross(thrust_i * n_i)
+            # Rotor drag torque, about the rotor's own axis. Kept as the
+            # reference's hover LINEARISATION (dMz/dW ~ 2*k_m*W_hover) rather
+            # than the quadratic k_m*W^2: changing that is a fidelity decision
+            # independent of thrust direction, and it would break parity.
+            M_body += (spins[i] * 2.0 * k_m * W_hover * W[i]) * n_i
+            # Reaction to spinning the rotor up, likewise about its own axis.
+            # `k_r_react` is the reference's ANGULAR-ACCELERATION coefficient,
+            # not a torque one: unlike k_r_signed, k_r_react_signed carried no
+            # 1/Izz, and its contribution was added straight to d_r. Multiply
+            # by Izz to express it as a torque so it survives I^-1 unchanged.
+            M_body += (spins[i] * k_r_react * Izz_ref * d_W[i]) * n_i
+
+        # Angular acceleration from the FULL inertia tensor. The scalar path
+        # divided by Ixx/Iyy/Izz, which assumed the body axes were principal;
+        # inverting the tensor drops that assumption, matching what
+        # --matrix-gains did on the controller side.
+        I_inv = Matrix(np.linalg.inv(np.asarray(p_dict["inertia"], dtype=float)))
+        Omega_dot = I_inv @ M_body
+        Mx, My, Mz = Omega_dot[0], Omega_dot[1], Omega_dot[2]
 
         # Translational kinematics.
         d_x = vx
         d_y = vy
         d_z = vz
 
-        # Translational dynamics: gravity + body-frame forces rotated to world.
-        accel = Matrix([0, 0, self.g]) + R @ Matrix([Dx, Dy, T])
+        # Translational dynamics: gravity + body-frame accelerations rotated to
+        # world. Drag is already an acceleration; rotor thrust is a force, so
+        # it is divided by mass here rather than having mass folded into k_w.
+        accel = Matrix([0, 0, self.g]) + R @ (Matrix([Dx, Dy, 0]) + F_body / mass)
         d_vx, d_vy, d_vz = accel
 
         # Euler-angle kinematics (singular at theta=±π/2; reset envs guard against this).
@@ -248,7 +303,8 @@ class DroneSimulator:
         d_theta = q * cos(phi) - r * sin(phi)
         d_psi = q * sin(phi) / cos(theta) + r * cos(phi) / cos(theta)
 
-        # Rotational dynamics — direct, no inertia inversion.
+        # Rotational dynamics: Mx/My/Mz above already hold I^-1 M with the
+        # full tensor. No gyroscopic (Omega x I Omega) term is integrated.
         d_p = Mx
         d_q = My
         d_r = Mz
