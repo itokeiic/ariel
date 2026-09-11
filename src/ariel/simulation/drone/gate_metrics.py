@@ -17,6 +17,12 @@ are named and implemented here rather than reinvented per call site.
     At the instant the drone crosses the gate plane, its offset from the gate
     centre *within that plane* -- lateral and vertical together -- must be
     within the half-opening. This is what a physical gate means.
+
+    The opening is a circle of radius ``gate_size / 2``, not a square: decided
+    2026-09-11 (docs/drone_morphology_gate_racing.md, section 8 item 8). A
+    square of the same half-width admits 27% more area. The sweep repeats this
+    test inline in ``rollout``; tests/unit/test_simulation/test_gate_criterion.py
+    pins the two against each other.
 """
 
 from __future__ import annotations

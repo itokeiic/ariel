@@ -309,7 +309,7 @@ figures of \BestSixty{}, \BestNinety{} and \BestOneTwenty{}. Two independent
 causes multiply to give that shortfall, and they meet at an intermediate
 quantity: the mean speed over the whole path, which the first carries the
 nominal figure down to and the second carries down from. The gate figure is a
-median because the crossings are spread---\SIrange{3.09}{5.39}{\metre\per\second}
+median because the crossings are spread---\SIrange{\GateLoNinety}{\GateHiNinety}{\metre\per\second}
 at $90^\circ$---while the whole-path figure is a mean by construction, being a
 distance divided by a time.
 
@@ -368,6 +368,16 @@ same: the numbers here are an ordinal difficulty scale rather than physical
 gate speeds, and they are \textbf{not comparable across turn angles}, since
 each column is divided by a different factor. All of this is measured on the
 reference trajectory alone by \texttt{docs/tools/speed\_semantics.py}.
+
+% DRAFT (open item 9, 2026-09-11) -- for the author to reword.
+Re-expressed as the reference's median speed at the gates, with each airframe
+at its own limiting speed, the within-column spreads quoted above shrink to
+\SI{\GateSpreadSixty}{\percent}, \SI{\GateSpreadNinety}{\percent} and
+\SI{\GateSpreadOneTwenty}{\percent}. They shrink because the ratio rises
+slightly with $v$, through the startup term $1 + T_{\text{startup}}v/\ell$, and
+so discounts the fastest airframes most. The ranking within every column is
+unchanged, and the spread still grows with corner sharpness. These are the
+reference's speeds at the gates, not the drone's, which lags behind it.
 
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
 bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the

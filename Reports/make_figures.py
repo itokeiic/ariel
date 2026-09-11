@@ -432,6 +432,8 @@ def speed_semantics_vals(best: dict[str, str]) -> dict[str, str]:
         arcs.append(r["arc"])
         vals |= {
             f"GateSpeed{name}": f"{r['gate_med']:.2f}",
+            f"GateLo{name}": f"{r['gate_lo']:.2f}",
+            f"GateHi{name}": f"{r['gate_hi']:.2f}",
             f"MeanSpeed{name}": f"{r['mean']:.2f}",
             f"StartupFac{name}": f"{r['startup_factor']:.2f}",
             f"GearingFac{name}": f"{r['gearing_factor']:.2f}",
@@ -440,6 +442,41 @@ def speed_semantics_vals(best: dict[str, str]) -> dict[str, str]:
         vals["Polyline"] = f"{r['polyline']:.1f}"
         vals["PeakRef"] = f"{max(float(vals.get('PeakRef', 0)), r['peak']):.0f}"
     vals |= {"ArcLo": f"{min(arcs):.1f}", "ArcHi": f"{max(arcs):.1f}"}
+    return vals
+
+
+def gate_speed_spread_vals() -> dict[str, str]:
+    """Table 1's within-column spreads, re-expressed as reference gate speed.
+
+    Read from docs/data/speed_semantics_rankings.csv, written by
+    docs/tools/speed_semantics.py. It takes about six minutes of spline sampling,
+    too slow to redo on every build. The CSV's nominal column is checked against
+    Table 1 so the two cannot drift apart. The report's two claims about it -- the
+    ranking is unchanged, and the spread still grows with sharpness -- are
+    asserted rather than assumed.
+    """
+    path = REPO / "docs" / "data" / "speed_semantics_rankings.csv"
+    rows = list(csv.DictReader(open(path)))
+    data = load_speeds()
+
+    def order(xs: list[float]) -> list[int]:
+        return sorted(range(len(xs)), key=lambda i: (xs[i], i))
+
+    vals: dict[str, str] = {}
+    spreads = []
+    for t, name in ((60.0, "Sixty"), (90.0, "Ninety"), (120.0, "OneTwenty")):
+        ours = sorted((float(r["half_angle_deg"]), float(r["max_speed"]),
+                       float(r["gate_speed_median"]))
+                      for r in rows if float(r["turn_deg"]) == t)
+        table1 = [float(r["max_speed"]) for _, r in sorted(data[t].items())]
+        nominal = [v for _, v, _ in ours]
+        gate = [g for _, _, g in ours]
+        assert nominal == table1, (
+            f"{t} deg: {path.name} is stale against Table 1 -- rerun speed_semantics.py")
+        assert order(nominal) == order(gate), f"{t} deg: gate speed reorders Table 1"
+        spreads.append(100 * (max(gate) - min(gate)) / max(gate))
+        vals[f"GateSpread{name}"] = f"{spreads[-1]:.1f}"
+    assert spreads == sorted(spreads), "gate-speed spread no longer grows with sharpness"
     return vals
 
 
@@ -497,6 +534,7 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
         "PubBestOneTwenty": "7.078",
         **speed_vals,
         **speed_semantics_vals(speed_vals),
+        **gate_speed_spread_vals(),
         "GearEnd": f"{gearing['first']:.2f}",
         "GearInterior": f"{gearing['interior']:.2f}",
         "GearRatio": f"{gearing['ratio']:.2f}",

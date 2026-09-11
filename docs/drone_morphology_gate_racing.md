@@ -581,6 +581,17 @@ is, and `GateChecker` is shared with `src/ariel/ec/drone/evaluators/lee_tune_eva
 flown3d` makes the stricter rule available meanwhile, and everything reported
 after 2026-08-17 uses it.
 
+> **Corrected 2026-09-11.** The paragraph above has two errors.
+> * `GateChecker` is not shared.
+>   `src/ariel/ec/drone/evaluators/lee_tune_evaluator.py` defines its own
+>   class, which does check altitude, but as a square.
+> * What was reported after 2026-08-17 uses `--completion strict`, not
+>   `flown3d`. The table above shows `flown3d` (proximity) superseded the same
+>   day.
+>
+> The criterion is now decided: a circular opening of radius `gate_size/2`
+> (§8 item 8).
+
 ## 4. What was built
 
 | piece | where | why |
@@ -1829,23 +1840,104 @@ Two conventions worth knowing when reading the CSVs:
    bodies, where closed-loop bandwidth becomes `sqrt(K_rot/I)` and varies 2.6x
    across the family. If the spread jumps, morphology optimisation on this stack
    is really a co-design problem. *(Answered 2026-08-16: it does -- 2-5x.)*
-8. **The gate-pass criterion (§3.8) -- decide what a gate is.** `GateChecker`
-   ignores altitude and is shared with
-   `src/ariel/ec/drone/evaluators/lee_tune_evaluator.py`, so the EA scores gates
-   the same wrong way. `--completion strict` is available and is now the
-   default in the sweep, but nothing is fixed at source, and fixing it means
-   deciding whether a gate is a slot, a circular opening, or a square frame --
-   a task-design choice, not a patch. Until then every pre-2026-08-17 speed in
-   this repository is an upper bound.
+8. **DECIDED (2026-09-11) -- a gate is a circular opening of radius
+   `gate_size/2`, 0.5 m here (§3.8).** This is the `strict` criterion.
+   * It is implemented in `src/ariel/simulation/drone/gate_metrics.py` and
+     again inline in the sweep's `rollout`.
+   * It has been the sweep's default since 2026-08-17, and it is the test
+     behind every reported speed and the report's scoring paragraph.
 
-9. **Arc-length parameterisation of the reference (§7.6b).** The spline
-   advances at constant $du/dt$, not constant speed, so the reference is 1.8-2.9x
-   slower at the gates than the nominal `--speed` and peaks near 28 m/s in the
-   final span. Nothing reported here is invalidated -- every body flies the same
-   reference, and the peak lies past where flights end -- but speeds are not
-   comparable across turn angles, and an arc-length reparameterisation would
-   make `--speed` mean what it says. Wanted before any result is quoted as a
-   physical speed.
+   So no result changes. Every pre-2026-08-17 speed is still an upper bound.
+
+   *Record corrected.* There are two classes named `GateChecker`, not one
+   shared class:
+   * **`examples/d_drones/_ctrl_helpers.py`** is horizontal-only (`pos[:2]`).
+     The sweep still runs it in every rollout, but only
+     `--completion sequential` reads its verdict. It is left unchanged,
+     because the `examples/d_drones` scripts use it too.
+   * **`src/ariel/ec/drone/evaluators/lee_tune_evaluator.py`** does check
+     altitude, but tests a **square**
+     (`abs(lateral) <= h and abs(vertical) <= h`) and counts a crossing in
+     either direction. Its sign test is strict on both sides, so a sample that
+     lands exactly on the plane hides the crossing. Found while checking these
+     tests: a synthetic flight sampled at `s = 0` never registered a pass. That
+     is unlikely in continuous flight. It scores the EA, not this sweep. It is left unchanged
+     and is out of scope for the X-configuration slalom work. It is not the
+     report's criterion: a square of the same half-width admits 27% more area.
+
+   *Pinned* by `tests/unit/test_simulation/test_gate_criterion.py`:
+   * a crossing below the centre fails once the offset exceeds the radius;
+   * a square's corner fails;
+   * the offset is projected into a yawed gate's plane;
+   * a real rollout's inline count equals `crossing_report` on its logged
+     path, on a flight that both passes and misses gates.
+
+   *Reopen if* EA scores are to be compared with the sweep, or gates are
+   modelled as physical frames. A physical frame's geometry would then define
+   the opening.
+
+   > **SUPERSEDED 2026-09-11.** The original item is kept below. `GateChecker`
+   > is not shared with the evaluator, which has its own class that checks
+   > altitude, so "the EA scores gates the same wrong way" was wrong. It scores
+   > them a different way: as a square.
+   >
+   > 8. **The gate-pass criterion (§3.8) -- decide what a gate is.** `GateChecker`
+   > ignores altitude and is shared with
+   > `src/ariel/ec/drone/evaluators/lee_tune_evaluator.py`, so the EA scores gates
+   > the same wrong way. `--completion strict` is available and is now the
+   > default in the sweep, but nothing is fixed at source, and fixing it means
+   > deciding whether a gate is a slot, a circular opening, or a square frame --
+   > a task-design choice, not a patch. Until then every pre-2026-08-17 speed in
+   > this repository is an upper bound.
+
+9. **DECIDED (2026-09-11) -- speeds stay nominal (§7.6b).** `--speed` is not
+   changed; every recorded result stays reproducible.
+
+   *Cause.* The reference's median gate speed sits 1.84x / 2.14x / 2.88x below
+   the nominal figure at 60° / 90° / 120°. Two factors multiply to give that:
+   * **startup accounting**, 1.75x / 1.59x / 1.46x. The ramp lies inside
+     `total_time`, net of the spline arc being longer than the polyline.
+   * **uniform-in-u parameterisation**, 1.05x / 1.35x / 1.97x. The clamped end
+     spans carry two waypoints each.
+
+   The first factor dominates at 60° and 90°; only the second grows with corner
+   sharpness (`docs/data/speed_semantics.md`).
+
+   *Fixing it would take both changes.* An arc-length reparameterisation alone
+   leaves the startup factor. A ramp budgeted outside the `path/speed` window
+   alone leaves the gearing.
+
+   *Why not fixing it loses nothing within a column.* Table 1 was re-expressed
+   as the reference's median gate speed, each body at its own limiting nominal
+   speed. Every ranking is identical. The spreads shrink from 2.69 / 6.07 /
+   7.05% to 1.94 / 4.64 / 5.67%, so they still grow with sharpness. They shrink
+   because the nominal-to-gate ratio rises with speed at every angle: the
+   startup term is `1 + startup*speed/path`, partly offset by a small fall in
+   gearing. Gate speed is the reference's, not the drone's, and the drone lags
+   it. Data: `docs/data/speed_semantics_rankings.md` and `.csv`, from
+   `docs/tools/speed_semantics.py`. The report quotes both spreads, and
+   `Reports/make_figures.py` asserts the identical ranking and the growth.
+
+   *Still true.* Speeds are not comparable across turn angles, and the final
+   span peaks at 26.7-28.9 m/s past the last gate.
+
+   *Reopen if* a result is to be quoted as a physical speed or compared across
+   turn angles, or a rollout flies the full `total_time`.
+
+   > **SUPERSEDED 2026-09-11.** The original item is kept below. It attributed
+   > the shortfall to the constant `du/dt` alone, and said an arc-length
+   > reparameterisation would make `--speed` mean what it says. Startup
+   > accounting is the larger factor at 60° and 90°, so reparameterising alone
+   > would not.
+   >
+   > 9. **Arc-length parameterisation of the reference (§7.6b).** The spline
+   > advances at constant $du/dt$, not constant speed, so the reference is 1.8-2.9x
+   > slower at the gates than the nominal `--speed` and peaks near 28 m/s in the
+   > final span. Nothing reported here is invalidated -- every body flies the same
+   > reference, and the peak lies past where flights end -- but speeds are not
+   > comparable across turn angles, and an arc-length reparameterisation would
+   > make `--speed` mean what it says. Wanted before any result is quoted as a
+   > physical speed.
 
 10. **RESOLVED (2026-08-16) -- Lee tracking.** Not a loop redesign: once the
    upstream defects were fixed, what remained was that the position loop's

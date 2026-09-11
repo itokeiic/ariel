@@ -31,6 +31,7 @@ so it is cheap and cannot drift with the plant or the controller.
 """
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -133,9 +134,79 @@ def table(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+TABLE1 = REPO / "docs" / "data" / "tuned_strict_completion.csv"
+RANKINGS_OUT = REPO / "docs" / "data" / "speed_semantics_rankings.md"
+# Read by Reports/make_figures.py, which checks its nominal column against TABLE1
+# rather than re-running the ~6 minutes of spline sampling on every build.
+RANKINGS_CSV = REPO / "docs" / "data" / "speed_semantics_rankings.csv"
+
+
+def gate_speed_rankings(csv_path: Path = TABLE1) -> dict[float, dict]:
+    """Does quoting reference gate speed instead of nominal speed change Table 1?
+
+    For every body at its limiting nominal speed, the reference's median speed at
+    the gates. Gate speed is not a fixed multiple of nominal speed -- the startup
+    term (1 + startup*speed/path) grows with speed -- so rankings could in
+    principle reorder, and spreads do change. Returns, per turn angle, the rows,
+    whether the two rankings agree, and the spread in each unit.
+
+    This is the reference's speed at the gates, not the drone's: the drone lags
+    its reference.
+    """
+    rows = list(csv.DictReader(open(csv_path)))
+    cache: dict[tuple[float, float], float] = {}
+    out: dict[float, dict] = {}
+    for turn in sorted({float(r["turn_deg"]) for r in rows}):
+        col = sorted((float(r["half_angle_deg"]), float(r["max_speed"]))
+                     for r in rows if float(r["turn_deg"]) == turn)
+        body = []
+        for t, v in col:
+            if (turn, v) not in cache:
+                cache[(turn, v)] = measure(turn, v)["gate_med"]
+            body.append((t, v, cache[(turn, v)]))
+        nominal = [v for _, v, _ in body]
+        gate = [g for _, _, g in body]
+
+        def order(xs: list[float]) -> list[int]:
+            return sorted(range(len(xs)), key=lambda i: (xs[i], i))
+
+        def spread(xs: list[float]) -> float:
+            return 100.0 * (max(xs) - min(xs)) / max(xs)
+
+        out[turn] = {"rows": body, "same_order": order(nominal) == order(gate),
+                     "spread_nominal": spread(nominal), "spread_gate": spread(gate)}
+    return out
+
+
+def rankings_table(res: dict[float, dict]) -> str:
+    lines = ["| turn | ranking by nominal = ranking by gate speed | spread, nominal | spread, gate speed |",
+             "|---|---|---|---|"]
+    for turn, r in res.items():
+        lines.append(f"| {turn:.0f}° | {'yes' if r['same_order'] else '**no**'} | "
+                     f"{r['spread_nominal']:.2f}% | {r['spread_gate']:.2f}% |")
+    lines += ["", "Per body, at its limiting nominal speed (reference speed at the gates, not the drone's):", "",
+              "| turn | t (deg) | nominal | gate median | ratio |", "|---|---|---|---|---|"]
+    for turn, r in res.items():
+        for t, v, g in r["rows"]:
+            lines.append(f"| {turn:.0f}° | {t:.2f} | {v:.4f} | {g:.4f} | {v / g:.3f} |")
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
     rows = [measure(t, v) for t, v in CASES]
     md = table(rows)
     OUT.write_text(md)
     print(md)
     print(f"wrote {OUT.relative_to(REPO)}")
+    res = gate_speed_rankings()
+    rk = rankings_table(res)
+    RANKINGS_OUT.write_text(rk)
+    print(rk)
+    print(f"wrote {RANKINGS_OUT.relative_to(REPO)}")
+    with open(RANKINGS_CSV, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["turn_deg", "half_angle_deg", "max_speed", "gate_speed_median"])
+        for turn, r in res.items():
+            for t, v, g in r["rows"]:
+                w.writerow([turn, t, v, g])
+    print(f"wrote {RANKINGS_CSV.relative_to(REPO)}")
