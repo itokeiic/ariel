@@ -392,6 +392,19 @@ construction, but the \emph{achievable} one is not, since torque margin and
 motor saturation differ with geometry; a per-airframe tuning could therefore
 still move the ranking.
 
+% DRAFT (open item 4, 2026-09-16) -- for the author to reword.
+% Source: docs/data/gyroscopic_counterfactual.md and docs/data/gyroscopic_mechanism.md.
+More seriously, the simulated plant omits the gyroscopic term
+$\Omega\times I\Omega$ of Euler's equations. The attitude controller cancels that
+term, so on this plant the cancellation injects a torque instead. MuJoCo
+includes the term, and PhysX enables it by default. Restoring it shifts the
+optimum to wider frames at $90^\circ$ and $120^\circ$, reversing the trend
+reported here, with either of two motor-mixing schemes tested. The term's yaw
+component opposes the yaw a slalom demands on narrow frames and assists it on
+wide ones. On the most asymmetric frames it exceeds the yaw torque the rotors can
+produce. The ranking above should therefore be read as a property of the reduced
+plant until it is regenerated with the full rigid-body dynamics.
+
 \section{Implication}
 
 No single static geometry is best across the difficulty range. That is the first

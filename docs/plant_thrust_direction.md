@@ -230,6 +230,9 @@ against the linearised yaw response would need revisiting. It remains open.
 
 Also unchanged: there is still no gyroscopic term (`Omega x I Omega`) in the
 rotational dynamics. Pre-existing, and likewise out of scope here.
+*(Note 2026-09-16: out of scope for this fix, but not small. Restoring the term
+changes the Table 1 ranking; see `docs/drone_morphology_gate_racing.md`, §8
+item 4.)*
 
 ### Verification (§7 of the plan)
 

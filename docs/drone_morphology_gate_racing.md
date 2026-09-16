@@ -1242,6 +1242,21 @@ $\sqrt{\operatorname{eig}(I^{-1}K_R)}$, differ.
    fast-spinning body, and it is a second instance of the controller and plant
    disagreeing about the model (§3.2 was the first; it is fixed, this one is not).
 
+   > **SUPERSEDED 2026-09-16** (measured 2026-09-11). The caveat above is kept as
+   > written, but "small" does not hold in flight, and it is wrong in three ways:
+   > * **The term does not vanish at the X quad.** $I_{xx}=I_{yy}$ zeroes only its
+   >   yaw component. Roll and pitch components of 0.03-0.08 N·m remain at the
+   >   Table 1 limits.
+   > * **$\Omega=(6,3,1)$ rad/s understates flight rates.** $|p|$ reaches
+   >   8.9-19.5 rad/s. At each body's Table 1 limit, the injected torque peaks at
+   >   2.2-25% of that body's roll torque, least at t=45° and most at both ends of
+   >   the family.
+   > * **The quoted torque range is stale.** The feasible family spans
+   >   1.489-3.996 N·m (`Reports/numbers.tex`), not 1.7-3.9 N·m.
+   >
+   > Restoring the term in the plant moves the optimum to wider frames at 90° and
+   > 120°. See §8 item 4.
+
 ### 7.2c Principal axes, and the matrix-gain fix (`--matrix-gains`)
 
 The requirement behind §7.2b's per-axis decoupling is not symmetry as such but
@@ -1465,6 +1480,11 @@ blocks tilt-rotor work.
 > [plant_thrust_direction.md](plant_thrust_direction.md) §9.
 
 Drawn, with the geometry, in `docs/data/perturbation_morphologies.png`.
+
+> **Caveat (2026-09-16).** These flights, like Table 1, used the plant without
+> the gyroscopic term (§8 item 4). The azimuth and length perturbations make
+> $I_{xx}\neq I_{yy}$, which is what moved Table 1 once the term was restored.
+> Their costs are therefore expected to change; not yet measured.
 
 ### 7.3 The position loop: $m$ cancels entirely
 
@@ -1740,7 +1760,8 @@ uniform slalom unless a course set is named.
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25` |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
-| §7.2c perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --matrix-gains`, drawn by `docs/tools/perturbation_figure.py`. Regenerated 2026-09-11 with the fixed plant and decoder and full-tensor gains (the last three flags are now the defaults); the pre-fix run it replaced (2026-08-17) is quoted in the §7.2d note. |
+| §8 item 4 gyroscopic counterfactual and mechanism test | `docs/data/gyroscopic_counterfactual.md` with its six variant JSONs; `docs/data/gyroscopic_mechanism.md` | `uv run --no-sync python docs/tools/gyroscopic_counterfactual.py physical docs/data/gyroscopic_counterfactual/physical.json`, likewise for `current`, `no_gyro`, `uncancelled`, `current_yawlast` and `physical_yawlast`; then `summarise docs/data/gyroscopic_counterfactual`; the test is `mechanism docs/data/gyroscopic_mechanism.md`. Operating point: the §3.8 strict-completion row. |
+| §7.2d perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --matrix-gains`, drawn by `docs/tools/perturbation_figure.py`. Regenerated 2026-09-11 with the fixed plant and decoder and full-tensor gains (the last three flags are now the defaults); the pre-fix run it replaced (2026-08-17) is quoted in the §7.2d note. |
 | Report Figure 3, reference vs flown | `docs/data/flight_logs/slalom_{60,90,120}deg.npz` | `--video --turn-deg {60,90,120} --video-half-angle {36.81382,36.81382,20.44145} --video-speed {10.164,8.367,6.648} --completion strict --log-npz <path>`, drawn by `Reports/make_figures.py` |
 | §2 fixed-speed cliff | `docs/data/calibration_grid.csv`, `calibration_fine.csv` | `--calibrate --cal-speeds 2,2.5,3,3.5,4 --cal-turns 60,90,120 --n-courses 3` and `--cal-speeds 3.6,3.7,3.8,3.9 --cal-turns 90` |
 
@@ -1814,14 +1835,73 @@ Two conventions worth knowing when reading the CSVs:
    cylinders with each other; nothing stops a rotor intersecting the core. The
    EA's `inner_boundary_radius = 0.055` permits it. The sweep checks
    `L ≥ core_radius + 1.1·prop_radius` itself.
-4. **The controller cancels a gyroscopic term the plant does not have** (§7.2b).
-   The attitude law adds $+\Omega\times I\Omega$; `dynamics_params` integrates
-   $\dot{\Omega}=I^{-1}M$ without it, so the term is injected rather than
-   cancelled. Under 3% of available torque for the symmetric bodies swept here,
-   and exactly zero at the X quad, but it grows with asymmetry and rate. Fixed
-   for free by the normal-aware plant work (item 1), which restores the full
-   Euler equation. *(Corrected 2026-09-11: it did not. The plant fix inverts the
-   full tensor but still omits $\Omega\times I\Omega$, so this item stays open.)*
+4. **The plant omits the gyroscopic term the controller cancels (§7.2b) -- OPEN.
+   Measured 2026-09-11; record corrected 2026-09-16.**
+
+   *The mismatch.* The attitude law adds $+\Omega\times I\Omega$
+   (`src/ariel/simulation/drone/controllers/lee_control/base_lee_controller.py`,
+   lines 170-171 and 189), which is the standard Lee cancellation.
+   `DroneSimulator` and the torch env integrate $\dot\Omega=I^{-1}M$ without the
+   term, so the cancellation acts as an injected torque.
+
+   *Only our plants omit it.* airevolve's simulator integrates
+   $\dot\Omega=I^{-1}(M-\Omega\times I\Omega)$, MuJoCo includes the term, and
+   PhysX enables it by default (`physxRigidBody:enableGyroscopicForces = true` in
+   the Isaac Sim 5.1 schema; not checked for articulation links). ariel's plant
+   lost it in its first commit, when the dynamics were replaced by the reference
+   form.
+
+   *Magnitude, at each body's Table 1 limit.* The peak injected torque is 2.2-25%
+   of the body's roll torque: least at t=45°, most at both ends of the family.
+
+   *Effect on Table 1* (`docs/tools/gyroscopic_counterfactual.py`, results in
+   `docs/data/gyroscopic_counterfactual.md`). The `current` variant reproduces
+   Table 1 on 21/21 cells, and all 126 bisections are monotone. With the term in
+   the plant, the optimum moves to wider frames at 90° and 120°:
+
+   * **90°:** Table 1 is best at t=36.81° (spread 6.1%). With the term in the
+     plant, the best frame is 45.00° (31.2%) with the original mixer and
+     61.37-69.56° (14.5%) with the yaw-last mixer.
+   * **120°:** Table 1 is best at 20.44-28.63° (7.1%). With the term in the
+     plant, the best frame is 61.37-69.56° (26.3%) with the original mixer and
+     53.19-61.37° (19.0%) with the yaw-last mixer.
+
+   The yaw-last mixer allocates thrust, roll and pitch first and scales yaw to
+   fit. It changes the numbers but not the direction. On the current plant it
+   keeps narrow frames best, so the shift comes from the gyroscopic physics.
+
+   *Mechanism* (pre-registered 2026-09-16, `docs/data/gyroscopic_mechanism.md`).
+   Yaw torque capacity at hover is 0.092 N·m on every body. The term's yaw
+   component, $(I_{xx}-I_{yy})\,pq$, correlates with the yaw torque the controller
+   demands: -0.31 to -0.39 on the two narrowest frames and +0.31 to +0.37 on the
+   two widest, at all three turn angles. So it opposes the demanded yaw on narrow
+   frames and assists it on wide ones. On the four outer frames it exceeds yaw
+   capacity on 13-24% of steps. Two limits apply:
+   * The sign flip at t=45° follows from the sign of $I_{xx}-I_{yy}$ alone. The
+     substantive finding is that $pq$ correlates with the yaw demand at all.
+   * At 60° the correlations only just clear the pre-registered ±0.3 threshold.
+
+   *A second defect surfaced, not yet its own item.* The mixer clips each motor
+   independently, so a yaw demand beyond capacity inflates thrust: 17.4 N
+   delivered against 8.1 N commanded at hover.
+
+   *Decision (2026-09-16).* Fix the plant rather than remove the cancellation.
+   Pending, in order:
+   1. item 17, the yaw authority model, which the mechanism turns on;
+   2. the plant fix in both plants;
+   3. regeneration of Table 1, the perturbation table and the report.
+
+   > **SUPERSEDED 2026-09-16.** The original item is kept below. "Under 3%" and
+   > "exactly zero at the X quad" were wrong; see §7.2b caveat 3.
+   >
+   > 4. **The controller cancels a gyroscopic term the plant does not have** (§7.2b).
+   > The attitude law adds $+\Omega\times I\Omega$; `dynamics_params` integrates
+   > $\dot{\Omega}=I^{-1}M$ without it, so the term is injected rather than
+   > cancelled. Under 3% of available torque for the symmetric bodies swept here,
+   > and exactly zero at the X quad, but it grows with asymmetry and rate. Fixed
+   > for free by the normal-aware plant work (item 1), which restores the full
+   > Euler equation. *(Corrected 2026-09-11: it did not. The plant fix inverts the
+   > full tensor but still omits $\Omega\times I\Omega$, so this item stays open.)*
 5. **Repair's contract changes for morphing bodies**: collision-free at `q = 0`
    guarantees nothing across a joint envelope.
 6. **The task is a cliff** at fixed speed (§2) -- nine operating points from 2.0
