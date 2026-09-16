@@ -49,7 +49,10 @@ def test_report_quotes_no_literal_numbers_for_generated_quantities() -> None:
     assert r"\input{numbers}" in tex
     generated = {"20.44", "69.56", "313.3", "121.3", "2.58", "120.8",
                  "1.489", "3.996", "1.735", "3.896",
-                 # speeds, current and superseded -- both come from numbers.tex
+                 # speeds, current and superseded -- both come from numbers.tex.
+                 # 10.398 / 8.250 / 7.117 are the 2026-09-16 bests (gyroscopic
+                 # plant); 10.164 / 8.367 / 6.648 the 2026-08-17 strict ones.
+                 "10.398", "8.250", "7.117",
                  "10.164", "8.367", "6.648", "12.172", "8.578", "7.078"}
     stale = sorted(v for v in generated if v in tex)
     assert not stale, f"literal values in the prose, use the macros instead: {stale}"

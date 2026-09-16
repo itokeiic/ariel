@@ -222,6 +222,9 @@ unpatched sweep and the fixed decoder: 9.930 / 7.703 / 6.297 m/s at 60° / 90° 
 with every bisection converged and monotone. These differ from the §5 probe
 (9.852 / 7.586 / 6.336) because that run used diagonal attitude gains and this body
 has non-zero products of inertia; the two are not expected to match.
+*(2026-09-16: regenerated again on the full rigid-body plant, with the gyroscopic
+term and quadratic rotor drag: 9.969 / 7.820 / 6.570 m/s. See
+`docs/drone_morphology_gate_racing.md`, §7.2d.)*
 
 **Not examined.** `cartesian_euler_to_blueprint` authors its motor rpy literally in
 an elevated arm's frame. Whether that matches its encoding's intent is the same

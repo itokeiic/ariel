@@ -116,11 +116,12 @@ def sweep():
 
 
 def test_sweep_inline_criterion_matches_crossing_report(sweep) -> None:
-    """A real 90-degree flight, just past the limit, scored both ways.
+    """A real 90-degree flight, above the limit, scored both ways.
 
-    The body is the Table 1 winner at 90 degrees (t = 36.81 deg), which completes
-    at 8.367 m/s. At 8.6 m/s it passes some gates and misses others, so a count
-    of 0 or 15 from either implementation cannot hide a disagreement.
+    The body is t = 36.81 deg, the 90-degree Table 1 winner until 2026-09-16; on
+    the current plant it completes at 6.961 m/s. At 8.6 m/s it passes some gates
+    and misses others, so a count of 0 or 15 from either implementation cannot
+    hide a disagreement -- the guard below fails if that stops being true.
     `rollout` exposes counts, not per-gate verdicts, so counts are compared.
     """
     from ariel.body_phenotypes.drone.backends import blueprint_to_propellers

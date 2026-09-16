@@ -100,7 +100,13 @@ if __name__ == "__main__":
     md = table(rs)
     OUT.write_text(md)
     print(md)
-    for turn, speed in ((60.0, 10.164), (90.0, 8.367), (120.0, 6.648)):
+    # Each course's Table 1 best speed. SUPERSEDED 2026-09-16: hard-coded as
+    # 10.164 / 8.367 / 6.648, stale once Table 1 was regenerated.
+    import csv  # noqa: PLC0415
+    t1 = list(csv.DictReader(open(REPO / "docs" / "data" / "tuned_strict_completion.csv")))
+    bests = [(turn, max(float(r["max_speed"]) for r in t1 if float(r["turn_deg"]) == turn))
+             for turn in (60.0, 90.0, 120.0)]
+    for turn, speed in bests:
         amp, rate = commanded_yaw(turn, speed)
         print(f"  {turn:.0f}°: commanded yaw amplitude +/-{amp:.0f}°, peak rate {rate:.0f}°/s")
     print(f"\nwrote {OUT.relative_to(REPO)}")

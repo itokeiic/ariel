@@ -19,7 +19,9 @@ variant:
 
 `neither` must reproduce docs/data/perturbation.csv and `both` the post-fix
 perturbation run cell for cell; that is what validates the instrument, and it
-did (12/12 cells, 2026-09-11). `--matrix-gains` switches the controller to
+did (12/12 cells, 2026-09-11). NOTE 2026-09-16: docs/data/perturbation.csv has
+since been regenerated on the plant with the gyroscopic term and quadratic rotor
+drag, so this validation reproduces only at commit 8d3174b or earlier. `--matrix-gains` switches the controller to
 full-tensor attitude gains, to test whether an inertia effect is a
 controller/plant mismatch rather than harder physics.
 

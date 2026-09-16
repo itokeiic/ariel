@@ -218,6 +218,12 @@ Two conditions matter for the numbers below. Feedforward of the reference veloci
   \input{results_table.tex}
 \end{table}
 
+% STALE 2026-09-16 (regenerated Table 1, gyroscopic plant) -- for the author.
+% Contradicted: at 60 deg the narrowest frame is not last (the two widest are
+% slower); at 120 deg it is LAST, and the widest is best; the optimum does not
+% migrate toward the narrow end but from the middle (60) to the wide end (90,
+% 120); the 120 deg ranking is not monotone (28.63 beats 36.81). See
+% docs/drone_morphology_gate_racing.md section 2.
 The narrow end swaps ends. At $60^\circ$ the narrowest frame, which has the
 highest roll authority, is \emph{last} (\SI{\NarrowSixty}{\percent}); at
 $120^\circ$ it is \emph{first}, and the widest frame is last
@@ -228,12 +234,20 @@ $\ArgmaxNinety^\circ$ at $90^\circ$, and $\ArgmaxOneTwenty^\circ$ at
 $120^\circ$. At $120^\circ$ the ranking is monotone in $t$ from best to worst,
 with no inversions.
 
+% STALE 2026-09-16 -- for the author. The spread no longer grows monotonically
+% with sharpness: 4.1 / 32.7 / 25.8 % (largest at 90 deg).
 So does the size of the effect. The spread across the family grows with corner
 sharpness---\SI{\SpreadSixty}{\percent} at $60^\circ$,
 \SI{\SpreadNinety}{\percent} at $90^\circ$, \SI{\SpreadOneTwenty}{\percent} at
 $120^\circ$---so geometry matters progressively more as the task gets harder,
 which is the same conclusion read a second way.
 
+% STALE 2026-09-16 -- for the author. The roll-authority mechanism predicts the
+% narrow frames winning at sharp corners, which the regenerated data contradicts.
+% The supported mechanism (pre-registered test, run on the pre-fix plant and not
+% yet repeated) is the yaw component of Omega x I Omega opposing the demanded yaw
+% on narrow frames beyond the rotors' yaw capacity; see the doc, section 8 item 4.
+% "8.5 m/s on a 2.4 m leg" are literals from the old operating point.
 The mechanism is the one the authorities predict. Sharper corners demand faster
 bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
 drone has roughly a quarter of a second per corner---which rewards roll angular
@@ -256,10 +270,15 @@ distance to the gate centre over the whole flight, ignores \emph{when} that
 minimum occurred and so counts gates the drone passed beside rather than
 through. At the $90^\circ$ operating point the three criteria score the same
 flight 15/15, 15/15 and 8/15. Under the criterion defined above the best body
-reaches \SI{\BestSixty}{\metre\per\second} at $60^\circ$ against
+reaches \SI{\PrevBestSixty}{\metre\per\second} at $60^\circ$ against
 \SI{\PubBestSixty}{\metre\per\second} previously (\SI{-16.5}{\percent}),
-\SI{\BestNinety}{\metre\per\second} at $90^\circ$ (\SI{-2.5}{\percent}) and
-\SI{\BestOneTwenty}{\metre\per\second} at $120^\circ$ (\SI{-6.1}{\percent}).
+\SI{\PrevBestNinety}{\metre\per\second} at $90^\circ$ (\SI{-2.5}{\percent}) and
+\SI{\PrevBestOneTwenty}{\metre\per\second} at $120^\circ$ (\SI{-6.1}{\percent}).
+% FIXED 2026-09-16: these three compared \Best* with \PubBest*. \Best* now holds
+% the regenerated (gyroscopic-plant) bests, so the percentages would have been
+% false; \PrevBest* holds the 2026-08-17 strict values this paragraph is about.
+% STALE 2026-09-16: "unchanged in direction ... now sits at the narrow end with a
+% monotone ranking" was true on the 2026-08-17 plant, not on the regenerated one.
 The conclusion is unchanged in direction and cleaner in form: previously the
 $120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
 monotone ranking behind it. Full account in
@@ -273,7 +292,7 @@ monotone ranking behind it. Full account in
   is the path actually flown; green bars are the fifteen scored gates, all
   passed at these operating points. The drone does not track the reference---it
   lags in phase and \emph{overshoots} the weave, flying a wider amplitude than
-  asked, by a mean of \SIrange{0.28}{0.33}{\metre} and a maximum of
+  asked, by a mean of \SIrange{\XTrackMeanLo}{\XTrackMeanHi}{\metre} and a maximum of
   \SI{\XTrackNinety}{\metre}. Against the \SI{0.5}{\metre} gate radius that
   is most of the margin, which is why raising the speed a little above these
   values starts missing gates rather than degrading smoothly: the limit is set
@@ -284,6 +303,14 @@ monotone ranking behind it. Full account in
   \label{fig:flights}
 \end{figure}
 
+% STALE 2026-09-16 -- for the author. (1) "34 deg of yaw amplitude against 60
+% commanded, crabs 20 deg" and "+/-78 against +/-28" are literals from the old
+% 90 deg flight (t=36.81 at its 2026-08-17 limit, \PrevBestNinety), which has
+% been re-flown. (2) "the comparison
+% is unaffected ... the lag is common-mode" no longer holds: with the gyroscopic
+% term the yaw disturbance (Ixx-Iyy)pq differs across the family, and it is the
+% mechanism behind the regenerated ranking. Yaw authority per newton itself is
+% unchanged (geometry only).
 \paragraph{Heading, and the limits of the roll argument.} Yaw is commanded to
 follow the trajectory tangent, which is both what the gate geometry describes
 and what a vision-guided racer must do. The airframe cannot fully deliver it:
@@ -370,6 +397,8 @@ each column is divided by a different factor. All of this is measured on the
 reference trajectory alone by \texttt{docs/tools/speed\_semantics.py}.
 
 % DRAFT (open item 9, 2026-09-11) -- for the author to reword.
+% STALE 2026-09-16: "the spread still grows with corner sharpness" is false on
+% the regenerated data; the ranking-unchanged claim is still asserted by the build.
 Re-expressed as the reference's median speed at the gates, with each airframe
 at its own limiting speed, the within-column spreads quoted above shrink to
 \SI{\GateSpreadSixty}{\percent}, \SI{\GateSpreadNinety}{\percent} and
@@ -379,6 +408,8 @@ so discounts the fastest airframes most. The ranking within every column is
 unchanged, and the spread still grows with corner sharpness. These are the
 reference's speeds at the gates, not the drone's, which lags behind it.
 
+% STALE 2026-09-16 -- for the author. On the regenerated data the 60 deg column has
+% a single best (not a plateau), and the 120 deg ranking is not monotone in t.
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
 bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the
 best, so that column establishes only that both extremes are worse than the
@@ -393,6 +424,9 @@ motor saturation differ with geometry; a per-airframe tuning could therefore
 still move the ranking.
 
 % DRAFT (open item 4, 2026-09-16) -- for the author to reword.
+% OBSOLETE 2026-09-16 (later the same day): the plant now integrates the term and
+% Table 1 is regenerated with it, so this caveat describes a limitation that no
+% longer applies. Replace with a statement of what changed, or delete.
 % Source: docs/data/gyroscopic_counterfactual.md and docs/data/gyroscopic_mechanism.md.
 More seriously, the simulated plant omits the gyroscopic term
 $\Omega\times I\Omega$ of Euler's equations. The attitude controller cancels that
@@ -436,12 +470,19 @@ before the first build of a fresh clone. Rebuild with
 
 \begin{quote}\ttfamily\small
 uv run --no-sync python Reports/make\_figures.py \\
-latexmk -pdf Reports/morphology\_gate\_racing.tex
+latexmk -pdf -cd Reports/morphology\_gate\_racing.tex
 \end{quote}
+% Corrected 2026-09-16: this read `latexmk -pdf Reports/morphology_gate_racing.tex`,
+% which fails from the repository root (numbers.tex not found) because the
+% inputs are relative to Reports/. -cd builds in the file's own directory.
 
 \begin{sloppypar}
 Source data: \texttt{tuned\_strict\_completion.csv}, all three turn angles under
-the strict gate criterion. The superseded sequential-criterion runs
+the strict gate criterion; \texttt{speed\_semantics\_rankings.csv}, derived from
+it by \texttt{docs/tools/speed\_semantics.py}; and the Figure~\ref{fig:flights}
+flight logs in \texttt{docs/data/flight\_logs/}.
+% Corrected 2026-09-16: this listed only tuned_strict_completion.csv, but
+% make_figures.py also reads the rankings CSV and the three flight logs. The superseded sequential-criterion runs
 (\texttt{tuned\_60deg.csv}, \texttt{tuned\_90deg.csv},
 \texttt{tuned\_60\_120deg.csv}) are retained for comparison but no longer feed
 this report. Commands, the

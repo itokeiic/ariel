@@ -990,9 +990,13 @@ def video() -> None:
                 f"clip_lo {100 * out['saturation_lo']:.1f}%")
 
     if args.log_npz:
-        np.savez(args.log_npz, **out["log"],
+        # half_angle_deg and speed are what Reports/make_figures.py labels
+        # Figure 3 with. The committed logs carry them, but this call did not
+        # write them, so the documented command could not reproduce those files
+        # (found 2026-09-16).
+        np.savez_compressed(args.log_npz, **out["log"],
                  gate_pos=course.gate_pos, gate_yaw=course.path_yaw[:len(course.gate_pos)],
-                 gate_size=course.gate_size)
+                 gate_size=course.gate_size, half_angle_deg=half_deg, speed=speed)
         console.log(f"  → {args.log_npz}")
 
     path = DATA / f"slalom_{turn:.0f}deg_t{half_deg:.2f}_{speed:.3f}ms.mp4"

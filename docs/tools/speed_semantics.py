@@ -45,8 +45,17 @@ from ariel.simulation.tasks.slalom_course import slalom_gates
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "docs" / "data" / "speed_semantics.md"
 STARTUP = 3.0
-# The strict-criterion best operating point per course (docs/data/tuned_strict_completion.csv).
-CASES = ((60.0, 10.164), (90.0, 8.367), (120.0, 6.648))
+def cases() -> tuple[tuple[float, float], ...]:
+    """The strict-criterion best operating point per course, read from Table 1.
+
+    SUPERSEDED 2026-09-16: these were hard-coded as ((60, 10.164), (90, 8.367),
+    (120, 6.648)), which went stale when the plant gained the gyroscopic term
+    and Table 1 was regenerated. Read from the CSV so they cannot drift again.
+    """
+    rows = list(csv.DictReader(open(TABLE1)))
+    return tuple((turn, max(float(r["max_speed"]) for r in rows
+                            if float(r["turn_deg"]) == turn))
+                 for turn in sorted({float(r["turn_deg"]) for r in rows}))
 N_SAMPLES = 20001
 
 
@@ -193,7 +202,7 @@ def rankings_table(res: dict[float, dict]) -> str:
 
 
 if __name__ == "__main__":
-    rows = [measure(t, v) for t, v in CASES]
+    rows = [measure(t, v) for t, v in cases()]
     md = table(rows)
     OUT.write_text(md)
     print(md)

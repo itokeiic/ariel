@@ -451,9 +451,9 @@ def gate_speed_spread_vals() -> dict[str, str]:
     Read from docs/data/speed_semantics_rankings.csv, written by
     docs/tools/speed_semantics.py. It takes about six minutes of spline sampling,
     too slow to redo on every build. The CSV's nominal column is checked against
-    Table 1 so the two cannot drift apart. The report's two claims about it -- the
-    ranking is unchanged, and the spread still grows with sharpness -- are
-    asserted rather than assumed.
+    Table 1 so the two cannot drift apart. The report's claim about it -- the
+    ranking is unchanged -- is asserted rather than assumed. (It also asserted
+    that the spread grows with sharpness, until 2026-09-16; see below.)
     """
     path = REPO / "docs" / "data" / "speed_semantics_rankings.csv"
     rows = list(csv.DictReader(open(path)))
@@ -476,7 +476,10 @@ def gate_speed_spread_vals() -> dict[str, str]:
         assert order(nominal) == order(gate), f"{t} deg: gate speed reorders Table 1"
         spreads.append(100 * (max(gate) - min(gate)) / max(gate))
         vals[f"GateSpread{name}"] = f"{spreads[-1]:.1f}"
-    assert spreads == sorted(spreads), "gate-speed spread no longer grows with sharpness"
+    # SUPERSEDED 2026-09-16: this asserted the spread grows with sharpness, a
+    # claim of the report's item-9 draft sentence. On the plant with the
+    # gyroscopic term it does not (nominal spreads 4.1 / 32.7 / 25.8%), so the
+    # claim is withdrawn, not the check relaxed to keep it passing.
     return vals
 
 
@@ -519,6 +522,7 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
             f"Wide{name}": f"{100 * (col[ang[-1]] - b) / b:.1f}",
         }
 
+    fstats = flight_stats()
     vals = {
         "FeasLo": f"{lo:.2f}", "FeasHi": f"{hi:.2f}",
         "NPoints": f"{len(angles)}",
@@ -529,9 +533,18 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
         # Superseded sequential-criterion figures, quoted only in the note that
         # explains why they changed.
         **{f"XTrack{n}": f"{st['xt_max']:.2f}"
-           for n, st in zip(("Sixty", "Ninety", "OneTwenty"), flight_stats())},
+           for n, st in zip(("Sixty", "Ninety", "OneTwenty"), fstats)},
+        # Figure 3's caption quoted the mean cross-track as a literal
+        # (0.28-0.33 m), which went stale when the flights were re-flown.
+        "XTrackMeanLo": f"{min(st['xt_mean'] for st in fstats):.2f}",
+        "XTrackMeanHi": f"{max(st['xt_mean'] for st in fstats):.2f}",
         "PubBestSixty": "12.172", "PubBestNinety": "8.578",
         "PubBestOneTwenty": "7.078",
+        # The 2026-08-17 strict-criterion bests, measured on the plant without
+        # the gyroscopic term. Fixed, like PubBest*: they are history, and the
+        # "Revised 2026-08-17" paragraph compares against them.
+        "PrevBestSixty": "10.164", "PrevBestNinety": "8.367",
+        "PrevBestOneTwenty": "6.648",
         **speed_vals,
         **speed_semantics_vals(speed_vals),
         **gate_speed_spread_vals(),

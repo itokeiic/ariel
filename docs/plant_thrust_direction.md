@@ -227,6 +227,10 @@ The yaw drag torque is still the reference's **hover linearisation**
 Changing it is a fidelity decision independent of thrust direction, it would
 have broken the axial-parity gate, and every controller tuning calibrated
 against the linearised yaw response would need revisiting. It remains open.
+*(Fixed 2026-09-16, commit `4229360`: rotor drag torque is now $k_m W^2$ and the
+gyroscopic term is integrated. See `docs/drone_morphology_gate_racing.md`, §8
+items 4 and 17. The axial-parity test now pins the scalar form plus exactly those
+two terms.)*
 
 Also unchanged: there is still no gyroscopic term (`Omega x I Omega`) in the
 rotational dynamics. Pre-existing, and likewise out of scope here.
