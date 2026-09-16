@@ -54,13 +54,19 @@ import numpy as np
 warnings.simplefilter("ignore")
 REPO = Path(__file__).resolve().parents[2]
 TABLE1 = REPO / "docs" / "data" / "tuned_strict_completion.csv"
-VARIANTS = {  # name: (plant integrates the term, controller cancels it, mixer)
-    "current": (False, True, "clip"),
-    "physical": (True, True, "clip"),
-    "no_gyro": (False, False, "clip"),
-    "uncancelled": (True, False, "clip"),
-    "current_yawlast": (False, True, "yaw_last"),
-    "physical_yawlast": (True, True, "yaw_last"),
+VARIANTS = {  # name: (plant integrates the term, controller cancels it, mixer, plant yaw drag)
+    "current": (False, True, "clip", "lin"),
+    "physical": (True, True, "clip", "lin"),
+    "no_gyro": (False, False, "clip", "lin"),
+    "uncancelled": (True, False, "clip", "lin"),
+    "current_yawlast": (False, True, "yaw_last", "lin"),
+    "physical_yawlast": (True, True, "yaw_last", "lin"),
+    # Open item 17: the plant's rotor drag torque is the tangent at hover,
+    # 2 k_m W_hover W, while the mixer assumes k_m W^2 with the same k_m. In
+    # Table 1 flights the tangent gives ~0.7 of the quadratic yaw torque.
+    "current_quadyaw": (False, True, "clip", "quad"),
+    "physical_quadyaw": (True, True, "clip", "quad"),
+    "physical_quadyaw_yawlast": (True, True, "yaw_last", "quad"),
 }
 
 
@@ -112,7 +118,7 @@ if __name__ == "__main__" and sys.argv[1] == "summarise":
 MECHANISM = sys.argv[1] == "mechanism"
 VARIANT, OUT = ("no_gyro" if MECHANISM else sys.argv[1]), Path(sys.argv[2])
 assert VARIANT in VARIANTS, VARIANT
-PLANT_GYRO, CTRL_CANCELS, MIXER = VARIANTS[VARIANT]
+PLANT_GYRO, CTRL_CANCELS, MIXER, YAW = VARIANTS[VARIANT]
 
 # The sweep parses its CLI at import, so bind the Table 1 operating point first.
 sys.argv = ["sweep", "--completion", "strict", "--speed-lo", "2", "--speed-hi", "12",
@@ -140,7 +146,7 @@ errors: list[str] = []
 # (tau_z commanded, g_z the term would add) per controller call; mechanism mode only.
 YAW_LOG: list[tuple[float, float]] = []
 
-if PLANT_GYRO:
+if PLANT_GYRO or YAW == "quad":
     _orig_setup = ds.DroneSimulator._setup_dynamics
 
     def _setup_with_gyro(self) -> None:
@@ -149,12 +155,25 @@ if PLANT_GYRO:
         inertia = np.asarray(self.params["inertia"], dtype=float)
         inv = np.linalg.inv(inertia)
 
+        n = self.num_motors
+        spins = np.asarray(self.params["rotor_spins"], dtype=float)
+        dirs = np.asarray(self.params["rotor_dirs"], dtype=float)
+        k_m, w_hover = float(self.params["k_m"]), float(self.params["W_hover"])
+
         def with_gyro(state, action):
             calls["plant"] += 1
             try:
                 out = np.array(f(state, action), dtype=float)
                 w = np.asarray(state[9:12], dtype=float)   # body rates p, q, r
-                out[9:12] -= inv @ np.cross(w, inertia @ w)
+                if PLANT_GYRO:
+                    out[9:12] -= inv @ np.cross(w, inertia @ w)
+                if YAW == "quad":
+                    # Swap the plant's rotor drag torque, spin * 2 k_m W_hover W
+                    # about each rotor axis (drone_simulator.py), for k_m W^2.
+                    W = ((np.asarray(state[12:12 + n], dtype=float) + 1.0) / 2.0
+                         * (ds.W_MAX_N - ds.W_MIN_N) + ds.W_MIN_N)
+                    corr = ((spins * k_m * (W ** 2 - 2.0 * w_hover * W))[:, None] * dirs).sum(0)
+                    out[9:12] += inv @ corr
             except Exception as e:
                 errors.append(f"plant: {e!r}")
                 raise
@@ -178,16 +197,38 @@ if PLANT_GYRO:
                                            propsize=sweep.PROP_SIZE),
             convention="ned"),
         payload_mass=sweep.PAYLOAD_MASS)
+    # Motors are set off hover so the quadratic and tangent yaw models differ.
     _x = np.array(_sim.state, dtype=float)
     _x[9:12] = (4.0, -3.0, 2.0)
-    _u = np.zeros(_sim.num_motors)
-    _I = np.asarray(_sim.params["inertia"], dtype=float)
+    _p = _sim.params
+    _n = _sim.num_motors
+    _Wh, _km = float(_p["W_hover"]), float(_p["k_m"])
+    _s = np.asarray(_p["rotor_spins"], dtype=float)
+    _d = np.asarray(_p["rotor_dirs"], dtype=float)
+    _W = _Wh * np.array([1.2 + 0.3 * (i % 2) for i in range(_n)])
+    _x[12:12 + _n] = 2.0 * (_W - ds.W_MIN_N) / (ds.W_MAX_N - ds.W_MIN_N) - 1.0
+    _u = np.zeros(_n)
+    _I = np.asarray(_p["inertia"], dtype=float)
     _diff = (np.array(_sim.dynamics_func(_x, _u), dtype=float)
              - np.array(_sim._dynamics_without_gyro(_x, _u), dtype=float))
+    _expected = np.zeros(3)
+    if PLANT_GYRO:
+        _gyro = -np.cross(_x[9:12], _I @ _x[9:12])
+        assert np.abs(np.linalg.solve(_I, _gyro)).max() > 1.0, "gyro check is vacuous"
+        _expected += _gyro
+    if YAW == "quad":
+        _quad = ((_s * _km * _W ** 2)[:, None] * _d).sum(0)
+        _lin = ((_s * 2.0 * _km * _Wh * _W)[:, None] * _d).sum(0)
+        assert abs(_quad[2] - _lin[2]) > 1e-3, "yaw check is vacuous: the models agree here"
+        # At hover the two models must coincide: the tangent touches there.
+        _hov = np.full(_n, _Wh)
+        assert np.allclose(((_s * _km * (_hov ** 2 - 2.0 * _Wh * _hov))[:, None] * _d).sum(0),
+                           0.0, atol=1e-12)
+        _expected += _quad - _lin
     assert np.allclose(_diff[:9], 0.0) and np.allclose(_diff[12:], 0.0), _diff
-    assert np.allclose(_I @ _diff[9:12], -np.cross(_x[9:12], _I @ _x[9:12])), _diff
-    assert np.abs(_diff[9:12]).max() > 1.0, "check is vacuous: the term is ~0 here"
-    print("plant patch verified:", _diff[9:12], flush=True)
+    assert np.allclose(_I @ _diff[9:12], _expected), (_I @ _diff[9:12], _expected)
+    print("plant patch verified: gyro", PLANT_GYRO, "yaw", YAW,
+          "delta rates", _diff[9:12], flush=True)
     calls["plant"] = 0
 
 if not CTRL_CANCELS:

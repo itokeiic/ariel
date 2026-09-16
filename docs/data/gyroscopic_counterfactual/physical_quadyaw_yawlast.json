@@ -1,0 +1,179 @@
+{
+ "_mixer": {
+  "calls": 361108,
+  "unscaled_checked": 266900,
+  "yaw_scaled": 94208
+ },
+ "60@20.44": {
+  "max_speed": 11.453125,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6840952572621412,
+  "sat_lo": 0.33714285714285713
+ },
+ "_calls": {
+  "plant": 1443592,
+  "ctrl": 0
+ },
+ "60@28.63": {
+  "max_speed": 11.5703125,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6507463419599467,
+  "sat_lo": 0.3118811881188119
+ },
+ "60@36.81": {
+  "max_speed": 11.4140625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6366761142680587,
+  "sat_lo": 0.29170090386195563
+ },
+ "60@45.00": {
+  "max_speed": 11.4921875,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6487906764211379,
+  "sat_lo": 0.25205930807248766
+ },
+ "60@53.19": {
+  "max_speed": 11.4921875,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6496488380362836,
+  "sat_lo": 0.22487644151565075
+ },
+ "60@61.37": {
+  "max_speed": 11.375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.644885279123753,
+  "sat_lo": 0.20655737704918034
+ },
+ "60@69.56": {
+  "max_speed": 11.375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.6558995084976376,
+  "sat_lo": 0.19737919737919737
+ },
+ "90@20.44": {
+  "max_speed": 6.609375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.46760971411267765,
+  "sat_lo": 0.3058608058608059
+ },
+ "90@28.63": {
+  "max_speed": 6.84375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.4660063789217571,
+  "sat_lo": 0.2744853399875234
+ },
+ "90@36.81": {
+  "max_speed": 7.15625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.4589432532199236,
+  "sat_lo": 0.24407431133888532
+ },
+ "90@45.00": {
+  "max_speed": 8.09375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.48518486713733966,
+  "sat_lo": 0.24329896907216494
+ },
+ "90@53.19": {
+  "max_speed": 8.484375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.5144859581180532,
+  "sat_lo": 0.2248062015503876
+ },
+ "90@61.37": {
+  "max_speed": 8.6015625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.5242353752716735,
+  "sat_lo": 0.19020581973030518
+ },
+ "90@69.56": {
+  "max_speed": 8.6015625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.5226227300737527,
+  "sat_lo": 0.1595744680851064
+ },
+ "120@20.44": {
+  "max_speed": 5.59375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.40149964705567404,
+  "sat_lo": 0.25506294471811713
+ },
+ "120@28.63": {
+  "max_speed": 5.7890625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.41654408566439455,
+  "sat_lo": 0.24300111982082867
+ },
+ "120@36.81": {
+  "max_speed": 6.1015625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.42914731257959937,
+  "sat_lo": 0.2277456647398844
+ },
+ "120@45.00": {
+  "max_speed": 6.6484375,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.46331454987058857,
+  "sat_lo": 0.21733821733821734
+ },
+ "120@53.19": {
+  "max_speed": 7.15625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.49538302695418945,
+  "sat_lo": 0.20982142857142858
+ },
+ "120@61.37": {
+  "max_speed": 7.1953125,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.497419442373876,
+  "sat_lo": 0.15664961636828645
+ },
+ "120@69.56": {
+  "max_speed": 7.15625,
+  "monotone": true,
+  "bracket": "ok",
+  "n_rollouts": 10,
+  "trk": 0.4945180355662229,
+  "sat_lo": 0.09375
+ }
+}
