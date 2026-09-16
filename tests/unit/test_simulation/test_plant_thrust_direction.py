@@ -1,17 +1,24 @@
-"""Test: the plant integrates each rotor along its own thrust axis.
+"""Test: the plant integrates each rotor along its own axis, with rigid-body rotation.
 
 The plant used to reduce every rotor to `(x_i, y_i)` plus a spin sign and apply
 all thrust along body -z, while the controller's `mixerFM` allocated using the
 true normals -- two contradictory models of one drone inside one object. See
 docs/plant_thrust_direction.md.
 
-Two things are pinned here:
+Pinned here:
 
-* **Axial parity.** For a coplanar body the vector form must reproduce the old
-  scalar form exactly. The reference is recomputed from `self.params` rather
-  than loaded from a frozen file, so it pins the *intent* and stays readable.
+* **Axial parity.** For a coplanar body the vector plant must reproduce the old
+  scalar form exactly, plus the two terms deliberately added on 2026-09-16 and
+  nothing else. The reference is recomputed from `self.params` rather than
+  loaded from a frozen file, so it pins the *intent* and stays readable.
 * **Tilt actually does something.** The old plant was invariant to rotor cant;
   a test that only checked parity would pass on the unfixed code.
+* **The gyroscopic term** (2026-09-16, open item 4). A torque-free body with
+  unequal inertias obeys Euler's equations.
+* **Rotor drag torque is k_m W^2** (2026-09-16, open item 17), not the tangent at
+  hover it replaced.
+* **The controller's motor floor is the plant's**, not a constant from another
+  drone.
 """
 
 # Standard library
@@ -26,6 +33,7 @@ from ariel.simulation.drone.drone_simulator import (
     W_MAX_N,
     W_MIN_N,
     DroneSimulator,
+    _invert_sqrt_poly,
 )
 
 ARM = 0.11
@@ -45,8 +53,9 @@ def _scalar_reference(sim: DroneSimulator, state: np.ndarray,
                       action: np.ndarray) -> np.ndarray:
     """The pre-fix reduced dynamics, from the same params dict.
 
-    Kept deliberately literal -- this is the model the fix had to preserve for
-    zero cant, so it is written the way it was written, not refactored.
+    Kept deliberately literal -- this is the model the 2026-09-10 fix had to
+    preserve for zero cant, so it is written the way it was written, not
+    refactored. It has the hover-tangent yaw drag and no gyroscopic term.
     """
     p = sim.params
     n = sim.num_motors
@@ -77,8 +86,37 @@ def _scalar_reference(sim: DroneSimulator, state: np.ndarray,
     return np.concatenate([accel, [Mx, My, Mz]])
 
 
-def test_axial_parity_with_the_scalar_form() -> None:
-    """Zero cant: the vector plant reproduces the scalar plant it replaced."""
+def _terms_added_2026_09_16(sim: DroneSimulator, state: np.ndarray) -> np.ndarray:
+    """The change in angular acceleration from the two deliberate additions.
+
+    Written independently of the plant, from their physical statements:
+    * rotor drag torque k_m W^2 about each rotor axis replaces 2 k_m W_hover W;
+    * Euler's equation gains -Omega x I Omega.
+    """
+    p = sim.params
+    n = sim.num_motors
+    W = (state[12:12 + n] + 1) / 2 * (W_MAX_N - W_MIN_N) + W_MIN_N
+    spins = np.asarray(p["rotor_spins"], dtype=float)
+    dirs = np.asarray(p["rotor_dirs"], dtype=float)
+    k_m, w_hover = float(p["k_m"]), float(p["W_hover"])
+    drag_now = ((spins * k_m * W**2)[:, None] * dirs).sum(0)
+    drag_before = ((spins * 2.0 * k_m * w_hover * W)[:, None] * dirs).sum(0)
+    inertia = np.asarray(p["inertia"], dtype=float)
+    omega = state[9:12]
+    return np.linalg.solve(inertia, drag_now - drag_before - np.cross(omega, inertia @ omega))
+
+
+def _steady(sim: DroneSimulator, W: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Motor state at speeds `W` and the action that holds them (dW = 0)."""
+    p = sim.params
+    w = 2.0 * (W - W_MIN_N) / (W_MAX_N - W_MIN_N) - 1.0
+    action = np.array([2.0 * _invert_sqrt_poly(Wi, p["w_max"], p["w_min"], p["k"]) - 1.0
+                       for Wi in W])
+    return w, action
+
+
+def test_axial_parity_with_the_scalar_form_plus_two_terms() -> None:
+    """Zero cant: the vector plant is the scalar plant plus exactly two terms."""
     sim = DroneSimulator(propellers=_quad(0.0))
     n = sim.num_motors
     rng = np.random.default_rng(20260910)
@@ -94,9 +132,11 @@ def test_axial_parity_with_the_scalar_form() -> None:
 
         got = np.asarray(sim.dynamics_func(state, action), dtype=float).ravel()
         expected = _scalar_reference(sim, state, action)
-        # accelerations (3:6) and angular accelerations (9:12)
+        # accelerations (3:6) are untouched; angular accelerations (9:12) gain
+        # exactly the two 2026-09-16 terms.
         np.testing.assert_allclose(got[3:6], expected[:3], rtol=1e-9, atol=1e-9)
-        np.testing.assert_allclose(got[9:12], expected[3:], rtol=1e-9, atol=1e-9)
+        np.testing.assert_allclose(got[9:12], expected[3:] + _terms_added_2026_09_16(sim, state),
+                                   rtol=1e-9, atol=1e-9)
 
 
 def test_canted_rotors_produce_in_plane_force() -> None:
@@ -128,8 +168,80 @@ def test_canted_rotors_produce_in_plane_force() -> None:
             assert sd[5] - g == pytest.approx(-thrust_mag * np.cos(a), rel=1e-6)
 
 
+def test_torque_free_body_obeys_eulers_equations() -> None:
+    """A spinning body with unequal inertias and no net torque precesses.
+
+    A rectangular quad with all four rotors at one steady speed produces no net
+    moment (arms cancel, drag torques cancel, dW = 0), so its angular
+    acceleration is the gyroscopic term alone. The plant without the term
+    returned zero here.
+    """
+    locs = [[0.15, 0.08, 0], [-0.15, 0.08, 0], [-0.15, -0.08, 0], [0.15, -0.08, 0]]
+    props = [{"loc": loc, "dir": [0.0, 0.0, -1.0, s], "propsize": 5}
+             for loc, s in zip(locs, ["ccw", "cw", "ccw", "cw"], strict=True)]
+    sim = DroneSimulator(propellers=props)
+    inertia = np.asarray(sim.params["inertia"], dtype=float)
+    np.testing.assert_allclose(inertia - np.diag(np.diag(inertia)), 0.0, atol=1e-12)
+    Ixx, Iyy, Izz = np.diag(inertia)
+    assert abs(Ixx - Iyy) > 0.2 * max(Ixx, Iyy), "test body needs unequal inertias"
+
+    n = sim.num_motors
+    w, action = _steady(sim, np.full(n, float(sim.params["W_hover"])))
+    state = np.zeros(12 + n)
+    state[12:] = w
+
+    at_rest = np.asarray(sim.dynamics_func(state, action), dtype=float).ravel()
+    np.testing.assert_allclose(at_rest[9:12], 0.0, atol=1e-9)   # no net moment
+    np.testing.assert_allclose(at_rest[12:], 0.0, atol=1e-9)    # motors steady
+
+    p, q, r = 4.0, -3.0, 2.0
+    state[9:12] = (p, q, r)
+    got = np.asarray(sim.dynamics_func(state, action), dtype=float).ravel()[9:12]
+    euler = np.array([(Iyy - Izz) * q * r / Ixx,
+                      (Izz - Ixx) * r * p / Iyy,
+                      (Ixx - Iyy) * p * q / Izz])
+    np.testing.assert_allclose(got, euler, rtol=1e-9, atol=1e-9)
+    assert np.abs(got).max() > 1.0, "check is vacuous: the term is ~0 here"
+
+
+def test_rotor_drag_torque_is_quadratic_in_motor_speed() -> None:
+    """Off hover, yaw torque is k_m W^2 per rotor, not the tangent 2 k_m W_hover W.
+
+    Diagonal rotor pairs at 1.5x and 1.0x hover speed give a pure yaw moment.
+    """
+    sim = DroneSimulator(propellers=_quad(0.0))
+    p = sim.params
+    n = sim.num_motors
+    w_hover, k_m = float(p["W_hover"]), float(p["k_m"])
+    W = w_hover * np.array([1.5, 1.0, 1.5, 1.0])
+    w, action = _steady(sim, W)
+    state = np.zeros(12 + n)
+    state[12:] = w
+
+    got = np.asarray(sim.dynamics_func(state, action), dtype=float).ravel()
+    moment = np.asarray(p["inertia"], dtype=float) @ got[9:12]
+    spins = np.asarray(p["rotor_spins"], dtype=float)
+    nz = np.asarray(p["rotor_dirs"], dtype=float)[:, 2]
+    quadratic = float(np.sum(spins * k_m * W**2 * nz))
+    tangent = float(np.sum(spins * 2.0 * k_m * w_hover * W * nz))
+
+    np.testing.assert_allclose(moment[:2], 0.0, atol=1e-9)
+    assert moment[2] == pytest.approx(quadratic, rel=1e-9)
+    assert abs(quadratic - tangent) > 0.1 * abs(quadratic), "check is vacuous"
+
+
+def test_controller_motor_floor_is_the_plants_idle_speed() -> None:
+    """`minWmotor` was 75 rad/s, a Quadcopter_SimCon default for another drone.
+
+    The plant's motor model never runs below `w_min`, so a lower controller floor
+    let allocation assume headroom that commands silently lost.
+    """
+    sim = DroneSimulator(propellers=_quad(0.0))
+    assert sim.get_params()["minWmotor"] == sim.params["w_min"]
+
+
 def test_torch_plant_matches_the_sympy_plant() -> None:
-    """The two plants agree, tilted rotors included.
+    """The two plants agree, tilted rotors, gyroscopic term and yaw drag included.
 
     `TorchDroneGateEnv` advertises itself as a drop-in replacement for
     `DroneGateEnv`, so their dynamics must agree. Two defects broke that and
@@ -137,6 +249,8 @@ def test_torch_plant_matches_the_sympy_plant() -> None:
     rotor model, and it unnormalised the motor state against the motor's
     physical minimum (238.49 rad/s) instead of the normalisation floor
     (`W_MIN_N` = 0), which made the plants disagree even for a coplanar body.
+    The random states have non-zero body rates and off-hover motor speeds, so
+    both 2026-09-16 terms are exercised.
     """
     torch = pytest.importorskip("torch")
     from ariel.simulation.tasks.torch_drone_gate_env import (  # noqa: PLC0415

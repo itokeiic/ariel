@@ -30,6 +30,22 @@ changing the dynamics.
 SUPERSEDED IN PART (2026-09-10): the characterisation test exists
 (tests/unit/test_simulation/test_plant_thrust_direction.py). The provenance of
 the original reference form remains unverified.
+
+STATUS (2026-09-16): two terms the 2026-09-10 status above kept or omitted are
+now changed, and the controller's motor floor now matches the plant.
+* **Gyroscopic term integrated.** dOmega/dt = I^-1 (M - Omega x I Omega).
+  Without it the Lee controller's +Omega x I Omega was an injected torque.
+  Restoring it moved Table 1's optimum to wider frames at 90 and 120 deg;
+  see docs/drone_morphology_gate_racing.md section 8 item 4.
+* **Rotor drag torque is k_m W^2** about each rotor axis, the form the
+  controller's mixer assumes with the same k_m. It replaces the tangent at
+  hover, 2 k_m W_hover W, which gave ~0.7 of it in flight (item 17). The
+  identified 5-inch model this plant was ported from
+  (tudelft/optimal_quad_control_RL, params_5inch) is linear in W; the
+  quadratic form was chosen for controller/plant consistency.
+* **Controller floor:** `get_params()["minWmotor"]` is the plant's identified
+  idle speed `w_min`, not Quadcopter_SimCon's 75 rad/s default.
+The axial-parity test now pins the old scalar form plus exactly these two terms.
 """
 
 import warnings
@@ -254,7 +270,6 @@ class DroneSimulator:
         spins = p_dict["rotor_spins"]
         k_f = p_dict["k_f"]
         k_m = p_dict["k_m"]
-        W_hover = p_dict["W_hover"]
         k_r_react = p_dict["k_r_react"]
         mass = p_dict["mass"]
         Izz_ref = float(np.asarray(p_dict["inertia"], dtype=float)[2, 2])
@@ -267,11 +282,14 @@ class DroneSimulator:
             thrust_i = k_f * W[i]**2                      # N, along n_i
             F_body += thrust_i * n_i
             M_body += r_i.cross(thrust_i * n_i)
-            # Rotor drag torque, about the rotor's own axis. Kept as the
-            # reference's hover LINEARISATION (dMz/dW ~ 2*k_m*W_hover) rather
-            # than the quadratic k_m*W^2: changing that is a fidelity decision
-            # independent of thrust direction, and it would break parity.
-            M_body += (spins[i] * 2.0 * k_m * W_hover * W[i]) * n_i
+            # Rotor drag torque, k_m*W^2 about the rotor's own axis -- the form
+            # the controller's mixer allocates with, same k_m.
+            # SUPERSEDED 2026-09-16: this was the hover LINEARISATION
+            # 2*k_m*W_hover*W, kept on 2026-09-10 to hold exact parity. In
+            # Table 1 flights it gave a median 0.68-0.78 of the quadratic yaw
+            # torque (motors run 1.2-1.4x hover speed), so the plant under-
+            # delivered every yaw command (open item 17).
+            M_body += (spins[i] * k_m * W[i]**2) * n_i
             # Reaction to spinning the rotor up, likewise about its own axis.
             # `k_r_react` is the reference's ANGULAR-ACCELERATION coefficient,
             # not a torque one: unlike k_r_signed, k_r_react_signed carried no
@@ -283,8 +301,15 @@ class DroneSimulator:
         # divided by Ixx/Iyy/Izz, which assumed the body axes were principal;
         # inverting the tensor drops that assumption, matching what
         # --matrix-gains did on the controller side.
-        I_inv = Matrix(np.linalg.inv(np.asarray(p_dict["inertia"], dtype=float)))
-        Omega_dot = I_inv @ M_body
+        inertia = np.asarray(p_dict["inertia"], dtype=float)
+        I_inv = Matrix(np.linalg.inv(inertia))
+        # Euler's rigid-body equation, I dOmega/dt = M - Omega x I Omega. The
+        # gyroscopic term is what the Lee controller's +Omega x I Omega cancels.
+        # SUPERSEDED 2026-09-16: it was omitted, so that cancellation acted as an
+        # injected torque of up to 25% of a body's roll authority (open item 4).
+        omega = Matrix([p, q, r])
+        gyroscopic = omega.cross(Matrix(inertia) @ omega)
+        Omega_dot = I_inv @ (M_body - gyroscopic)
         Mx, My, Mz = Omega_dot[0], Omega_dot[1], Omega_dot[2]
 
         # Translational kinematics.
@@ -303,8 +328,8 @@ class DroneSimulator:
         d_theta = q * cos(phi) - r * sin(phi)
         d_psi = q * sin(phi) / cos(theta) + r * cos(phi) / cos(theta)
 
-        # Rotational dynamics: Mx/My/Mz above already hold I^-1 M with the
-        # full tensor. No gyroscopic (Omega x I Omega) term is integrated.
+        # Rotational dynamics: Mx/My/Mz above already hold
+        # I^-1 (M - Omega x I Omega) with the full tensor.
         d_p = Mx
         d_q = My
         d_r = Mz
@@ -472,7 +497,13 @@ class DroneSimulator:
             "dzm": 0.05, "kTh": k_f, "kTo": k_m, "w_hover": w_hover, "thr_hover": hover_thrust_per_motor,
             "mixerFM": mixer_fm, "mixerFMinv": np.linalg.pinv(mixer_fm),
             "minThr": 0.1 * self.num_motors, "maxThr": k_f * w_max**2 * self.num_motors,
-            "minWmotor": 75, "maxWmotor": w_max,
+            # The plant's identified idle speed (params_5inch w_min, 238.49
+            # rad/s for 5-inch props): the motor model never runs below it.
+            # SUPERSEDED 2026-09-16: this was 75, Quadcopter_SimCon's default
+            # for a different drone, so commands in 75-238 rad/s were silently
+            # raised by `_invert_sqrt_poly` and allocation believed it had
+            # headroom it did not.
+            "minWmotor": float(self.params["w_min"]), "maxWmotor": w_max,
             # Read tau from the reference-form params (set per prop in propeller_data.py).
             # The pre-migration value was hardcoded 0.015s; reference-form is 0.04s.
             "tau": float(self.params["tau"]), "kp": 1.0, "damp": 1.0,

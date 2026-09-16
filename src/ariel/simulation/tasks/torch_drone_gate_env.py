@@ -62,8 +62,9 @@ def _dynamics_body(
     # broadcast-and-sum; see `make_dynamics` for how they are built.
     B_force:   torch.Tensor,   # k_f * n_i                      -> force  (W^2)
     B_mom_sq:  torch.Tensor,   # k_f * (r_i x n_i)              -> moment (W^2)
-    B_mom_lin: torch.Tensor,   # spin_i * 2*k_m*W_hover * n_i   -> moment (W)
+    B_mom_drag: torch.Tensor,  # spin_i * k_m * n_i             -> moment (W^2)
     B_mom_dw:  torch.Tensor,   # spin_i * k_r_react*Izz * n_i   -> moment (dW)
+    I_mat:     torch.Tensor,   # (3,3) inertia tensor, for the gyroscopic term
     I_inv:     torch.Tensor,   # (3,3) inverse inertia tensor
     mass:      torch.Tensor,   # 0-d
 ) -> torch.Tensor:
@@ -131,16 +132,20 @@ def _dynamics_body(
     # produced the same z-force as an upright one and no in-plane force, while
     # the controller's mixerFM allocated it as tilted. Mirrors the fix in
     # DroneSimulator; see docs/plant_thrust_direction.md.
+    # Rotor drag torque is k_m*W^2, mirroring DroneSimulator (2026-09-16; it was
+    # the hover tangent 2*k_m*W_hover*W, open item 17).
     W2_b = W2.unsqueeze(0)                      # (1,N,E)
-    W_b  = W.unsqueeze(0)
     dW_b = dW.unsqueeze(0)
     F_body = (B_force * W2_b).sum(dim=1)        # (3,E)  newtons
     M_body = ((B_mom_sq * W2_b)
-              + (B_mom_lin * W_b)
+              + (B_mom_drag * W2_b)
               + (B_mom_dw * dW_b)).sum(dim=1)   # (3,E)  newton-metres
 
-    # Full inertia tensor, so the body axes need not be principal.
-    Omega_dot = I_inv @ M_body                  # (3,3)@(3,E) -> (3,E)
+    # Euler's equation with the full inertia tensor, gyroscopic term included
+    # (2026-09-16; it was omitted, open item 4).
+    Omega = torch.stack([p, q, r], dim=0)       # (3,E)
+    gyro = torch.linalg.cross(Omega, I_mat @ Omega, dim=0)
+    Omega_dot = I_inv @ (M_body - gyro)         # (3,3)@(3,E) -> (3,E)
     Mx, My, Mz = Omega_dot[0], Omega_dot[1], Omega_dot[2]
 
     # ---- translational kinematics / dynamics ----------------------------
@@ -214,7 +219,6 @@ def _build_torch_dynamics(
     spins = np.asarray(params["rotor_spins"], dtype=float)    # (N,) +1 cw
     k_f = float(params["k_f"])
     k_m = float(params["k_m"])
-    W_hover = float(params["W_hover"])
     inertia = np.asarray(params["inertia"], dtype=float)
     # k_r_react is the reference's ANGULAR-ACCELERATION coefficient, not a
     # torque one (k_r_react_signed carried no 1/Izz), so scale by Izz to make
@@ -226,8 +230,9 @@ def _build_torch_dynamics(
 
     p_B_force = _geom(k_f * dirs)
     p_B_mom_sq = _geom(k_f * np.cross(arms, dirs))
-    p_B_mom_lin = _geom((spins * 2.0 * k_m * W_hover)[:, None] * dirs)
+    p_B_mom_drag = _geom((spins * k_m)[:, None] * dirs)
     p_B_mom_dw = _geom((spins * float(params["k_r_react"]) * izz)[:, None] * dirs)
+    p_I_mat = _t(inertia)
     p_I_inv = _t(np.linalg.inv(inertia))
     p_mass = _t(float(params["mass"]))
 
@@ -238,7 +243,7 @@ def _build_torch_dynamics(
         return _fn(
             state, action,
             p_k_x, p_k_y, p_tau, p_k_sq, p_w_lo, p_w_hi, p_g, p_W_R,
-            p_B_force, p_B_mom_sq, p_B_mom_lin, p_B_mom_dw, p_I_inv, p_mass,
+            p_B_force, p_B_mom_sq, p_B_mom_drag, p_B_mom_dw, p_I_mat, p_I_inv, p_mass,
         )
 
     return dynamics

@@ -135,6 +135,30 @@ import ariel.simulation.drone.controllers.lee_control.base_lee_controller as blc
 import ariel.simulation.drone.drone_simulator as ds  # noqa: E402
 from ariel.simulation.tasks.slalom_course import slalom_gates  # noqa: E402
 
+# Every variant here is a patch on the plant as it was up to commit 8d3174b:
+# no gyroscopic term, hover-tangent yaw drag, controller motor floor 75 rad/s.
+# All three were fixed in the library on 2026-09-16, so on a later plant the
+# patches would apply twice and `current` would no longer be Table 1. Refuse to
+# run there. Probe: a symmetric body at one steady motor speed has no net moment,
+# so any angular acceleration at non-zero body rates is the gyroscopic term.
+from ariel.body_phenotypes.drone.backends import blueprint_to_propellers as _b2p  # noqa: E402
+from ariel.body_phenotypes.drone.decoders import spherical_angular_to_blueprint as _s2b  # noqa: E402
+
+_probe = ds.DroneSimulator(
+    propellers=_b2p(_s2b(sweep.make_genome(np.radians(20.44)), propsize=sweep.PROP_SIZE),
+                    convention="ned"),
+    payload_mass=sweep.PAYLOAD_MASS)
+_Wp = float(_probe.params["W_hover"])
+_xp = np.zeros(12 + _probe.num_motors)
+_xp[9:12] = (4.0, -3.0, 2.0)
+_xp[12:] = 2.0 * (_Wp - ds.W_MIN_N) / (ds.W_MAX_N - ds.W_MIN_N) - 1.0
+_up = np.full(_probe.num_motors, 2.0 * ds._invert_sqrt_poly(
+    _Wp, _probe.params["w_max"], _probe.params["w_min"], _probe.params["k"]) - 1.0)
+if np.abs(np.asarray(_probe.dynamics_func(_xp, _up), dtype=float).ravel()[9:12]).max() > 1e-6:
+    raise SystemExit(
+        "This plant already integrates the gyroscopic term (fixed 2026-09-16). The "
+        "counterfactual patches the pre-fix plant; reproduce its data at commit 8d3174b.")
+
 calls = {"plant": 0, "ctrl": 0}
 # rollout() catches every exception, including those raised while building the
 # drone, and scores the flight as a failure. A patch that raised would therefore

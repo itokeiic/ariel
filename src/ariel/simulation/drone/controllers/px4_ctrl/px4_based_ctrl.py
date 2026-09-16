@@ -246,7 +246,8 @@ class GeneralizedControl:
         
         # PIPELINE STEP 3: Apply Physical Limits and Extract Motor Speeds
         # Clip to ensure motor speeds stay within physical capabilities:
-        # - Minimum: quad.params["minWmotor"] (typically 75 rad/s for stability)
+        # - Minimum: quad.params["minWmotor"] (the plant's idle speed w_min since
+        #   2026-09-16; it was Quadcopter_SimCon's 75 rad/s default)
         # - Maximum: quad.params["maxWmotor"] (motor/ESC limit, typically w_max)
         #
         # Finally take square root to get actual commanded motor speeds in rad/s
