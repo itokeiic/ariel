@@ -276,7 +276,12 @@ def figure_spline_parameter(turn: float = 90.0) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------- figure 3
-LOGS = REPO / "docs" / "data" / "flight_logs"
+# Two result sets (2026-09-17). The report's Results section presents the REDUCED
+# model -- the plant without the gyroscopic term, with hover-tangent yaw drag and a
+# 75 rad/s controller motor floor -- restored from commit 8d3174b. Its last
+# subsection presents the CORRECTED model, whose data keep the canonical names.
+LOGS = REPO / "docs" / "data" / "flight_logs"          # corrected model
+LOGS_REDUCED = LOGS / "reduced_model"
 STARTUP_TIME = 3.0
 
 
@@ -289,10 +294,10 @@ def _cross_track(pos: np.ndarray, ref: np.ndarray) -> np.ndarray:
     return np.array([np.min(np.linalg.norm(ref - p, axis=1)) for p in pos])
 
 
-def flight_stats() -> list[dict]:
+def flight_stats(log_dir: Path = LOGS_REDUCED) -> list[dict]:
     out = []
     for turn in (60, 90, 120):
-        d = np.load(LOGS / f"slalom_{turn}deg.npz")
+        d = np.load(log_dir / f"slalom_{turn}deg.npz")
         pos, ref = d["pos"].astype(float), d["ref"].astype(float)
         rep = crossing_report(pos, d["gate_pos"].astype(float),
                               d["gate_yaw"].astype(float), float(d["gate_size"]))
@@ -312,7 +317,7 @@ def flight_stats() -> list[dict]:
     return out
 
 
-def figure_flights(stats: list[dict]) -> None:
+def figure_flights(stats: list[dict], name: str = "flights.pdf") -> None:
     """Reference vs flown, one row per course -- the discrepancy the tables hide."""
     # Not sharex: the courses differ in length (a 60 deg slalom runs further in
     # x than a 120 deg one), and sharing the axis squeezes the sharpest course
@@ -349,15 +354,22 @@ def figure_flights(stats: list[dict]) -> None:
     axes[0].legend(fontsize=7, loc="upper center", ncol=2, framealpha=0.95,
                    bbox_to_anchor=(0.5, -0.28))
     fig.tight_layout()
-    fig.savefig(OUT / "flights.pdf", bbox_inches="tight")
+    fig.savefig(OUT / name, bbox_inches="tight")
     plt.close(fig)
 
 
 # ---------------------------------------------------------------- table
 SPEED_TOL = 0.0625   # the bisection tolerance; differences below it are ties
+TURNS = ((60.0, "Sixty"), (90.0, "Ninety"), (120.0, "OneTwenty"))
+DATA = REPO / "docs" / "data"
+TABLE_REDUCED = DATA / "tuned_strict_completion_reduced_model.csv"
+TABLE_CORRECTED = DATA / "tuned_strict_completion.csv"
+RANKINGS_REDUCED = DATA / "speed_semantics_rankings_reduced_model.csv"
+RANKINGS_CORRECTED = DATA / "speed_semantics_rankings.csv"
+COUNTERFACTUAL = DATA / "gyroscopic_counterfactual"
 
 
-def load_speeds() -> dict[float, dict[float, dict]]:
+def load_speeds(path: Path = TABLE_REDUCED) -> dict[float, dict[float, dict]]:
     """Max completing speeds under the STRICT gate criterion.
 
     Earlier versions of this report read the sequential-criterion CSVs. That
@@ -365,8 +377,7 @@ def load_speeds() -> dict[float, dict[float, dict]]:
     the gates still scored passes -- see docs/drone_morphology_gate_racing.md
     section 3.8. Those numbers were upper bounds, by a sixth at 60 degrees.
     """
-    rows = list(csv.DictReader(
-        open(REPO / "docs" / "data" / "tuned_strict_completion.csv")))
+    rows = list(csv.DictReader(open(path)))
     data: dict[float, dict[float, dict]] = {}
     for r in rows:
         data.setdefault(float(r["turn_deg"]), {})[
@@ -374,8 +385,8 @@ def load_speeds() -> dict[float, dict[float, dict]]:
     return data
 
 
-def results_table() -> str:
-    data = load_speeds()
+def results_table(path: Path = TABLE_REDUCED) -> str:
+    data = load_speeds(path)
 
     angles = sorted(data[90.0])
     best = {t: max(float(r["max_speed"]) for r in data[t].values()) for t in data}
@@ -445,7 +456,8 @@ def speed_semantics_vals(best: dict[str, str]) -> dict[str, str]:
     return vals
 
 
-def gate_speed_spread_vals() -> dict[str, str]:
+def gate_speed_spread_vals(rankings: Path = RANKINGS_REDUCED,
+                           table: Path = TABLE_REDUCED, prefix: str = "") -> dict[str, str]:
     """Table 1's within-column spreads, re-expressed as reference gate speed.
 
     Read from docs/data/speed_semantics_rankings.csv, written by
@@ -455,9 +467,9 @@ def gate_speed_spread_vals() -> dict[str, str]:
     ranking is unchanged -- is asserted rather than assumed. (It also asserted
     that the spread grows with sharpness, until 2026-09-16; see below.)
     """
-    path = REPO / "docs" / "data" / "speed_semantics_rankings.csv"
+    path = rankings
     rows = list(csv.DictReader(open(path)))
-    data = load_speeds()
+    data = load_speeds(table)
 
     def order(xs: list[float]) -> list[int]:
         return sorted(range(len(xs)), key=lambda i: (xs[i], i))
@@ -475,12 +487,75 @@ def gate_speed_spread_vals() -> dict[str, str]:
             f"{t} deg: {path.name} is stale against Table 1 -- rerun speed_semantics.py")
         assert order(nominal) == order(gate), f"{t} deg: gate speed reorders Table 1"
         spreads.append(100 * (max(gate) - min(gate)) / max(gate))
-        vals[f"GateSpread{name}"] = f"{spreads[-1]:.1f}"
+        vals[f"{prefix}GateSpread{name}"] = f"{spreads[-1]:.1f}"
     # SUPERSEDED 2026-09-16: this asserted the spread grows with sharpness, a
     # claim of the report's item-9 draft sentence. On the plant with the
     # gyroscopic term it does not (nominal spreads 4.1 / 32.7 / 25.8%), so the
     # claim is withdrawn, not the check relaxed to keep it passing.
     return vals
+
+
+def column_macros(speeds: dict[float, dict[float, float]], prefix: str = "") -> dict[str, str]:
+    """Best, argmax (ties within SPEED_TOL), tie count, spread and end costs per course.
+
+    `speeds` is {turn: {half-angle rounded to 0.01: max speed}}.
+    """
+    vals: dict[str, str] = {}
+    for t, name in TURNS:
+        col = speeds[t]
+        b = max(col.values())
+        ties = sorted(a for a, v in col.items() if b - v < SPEED_TOL)
+        ang = sorted(col)
+        # \text{--} rather than a bare "--": the report cites these inside math
+        # mode ($\ArgmaxSixty^\circ$), where the en-dash ligature does not
+        # apply and "--" sets as two minus signs.
+        # A range claims every body between its ends ties too. When the tied
+        # bodies are not adjacent, list them instead (corrected model, 90 deg:
+        # 45.00 and 69.56 tie, 53.19 and 61.37 do not). Fixed 2026-09-17.
+        idx = [ang.index(a) for a in ties]
+        if len(ties) == 1:
+            rng = f"{ties[0]:.2f}"
+        elif idx == list(range(idx[0], idx[-1] + 1)):
+            rng = rf"{ties[0]:.2f}\text{{--}}{ties[-1]:.2f}"
+        else:
+            rng = r"\text{, }".join(f"{a:.2f}" for a in ties)
+        vals |= {
+            f"{prefix}Best{name}": f"{b:.3f}",
+            f"{prefix}Argmax{name}": rng,
+            f"{prefix}NTies{name}": f"{len(ties)}",
+            f"{prefix}Spread{name}": f"{100 * (b - min(col.values())) / b:.1f}",
+            f"{prefix}Narrow{name}": f"{100 * (col[ang[0]] - b) / b:.1f}",
+            f"{prefix}Wide{name}": f"{100 * (col[ang[-1]] - b) / b:.1f}",
+        }
+    return vals
+
+
+def table_speeds(path: Path) -> dict[float, dict[float, float]]:
+    return {t: {a: float(r["max_speed"]) for a, r in col.items()}
+            for t, col in load_speeds(path).items()}
+
+
+def counterfactual_speeds(variant: str) -> dict[float, dict[float, float]]:
+    """{turn: {half-angle: max speed}} from docs/data/gyroscopic_counterfactual/<variant>.json."""
+    import json  # noqa: PLC0415
+    cells = json.loads((COUNTERFACTUAL / f"{variant}.json").read_text())
+    out: dict[float, dict[float, float]] = {}
+    for key, cell in cells.items():
+        if key.startswith("_"):
+            continue
+        turn, half = key.split("@")
+        out.setdefault(float(turn), {})[round(float(half), 2)] = float(cell["max_speed"])
+    return out
+
+
+def flight_macros(stats: list[dict], prefix: str = "") -> dict[str, str]:
+    return {
+        **{f"{prefix}XTrack{n}": f"{st['xt_max']:.2f}"
+           for (_, n), st in zip(TURNS, stats)},
+        f"{prefix}XTrackMeanLo": f"{min(st['xt_mean'] for st in stats):.2f}",
+        f"{prefix}XTrackMeanHi": f"{max(st['xt_mean'] for st in stats):.2f}",
+        f"{prefix}XTrackMax": f"{max(st['xt_max'] for st in stats):.2f}",
+    }
 
 
 def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> str:
@@ -497,32 +572,9 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
     roll = np.array([agility(float(t))[0] for t in angles])
     pitch = np.array([agility(float(t))[1] for t in angles])
     tor = np.array([roll_torque(float(t)) for t in angles])
-    data = load_speeds()
-    def _col(t):
-        col = {a: float(r["max_speed"]) for a, r in data[t].items()}
-        b = max(col.values())
-        ties = sorted(a for a, v in col.items() if b - v < SPEED_TOL)
-        ang = sorted(col)
-        return col, b, ties, ang
-
-    speed_vals = {}
-    for t, name in ((60.0, "Sixty"), (90.0, "Ninety"), (120.0, "OneTwenty")):
-        col, b, ties, ang = _col(t)
-        # \text{--} rather than a bare "--": the report cites these inside math
-        # mode ($\ArgmaxSixty^\circ$), where the en-dash ligature does not
-        # apply and "--" sets as two minus signs.
-        rng = (f"{ties[0]:.2f}" if len(ties) == 1
-               else rf"{ties[0]:.2f}\text{{--}}{ties[-1]:.2f}")
-        speed_vals |= {
-            f"Best{name}": f"{b:.3f}",
-            f"Argmax{name}": rng,
-            f"NTies{name}": f"{len(ties)}",
-            f"Spread{name}": f"{100 * (b - min(col.values())) / b:.1f}",
-            f"Narrow{name}": f"{100 * (col[ang[0]] - b) / b:.1f}",
-            f"Wide{name}": f"{100 * (col[ang[-1]] - b) / b:.1f}",
-        }
-
-    fstats = flight_stats()
+    # Unprefixed macros describe the reduced model (the Results section as
+    # restored); Corr* the corrected model (its last subsection).
+    speed_vals = column_macros(table_speeds(TABLE_REDUCED))
     vals = {
         "FeasLo": f"{lo:.2f}", "FeasHi": f"{hi:.2f}",
         "NPoints": f"{len(angles)}",
@@ -530,24 +582,25 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
         "RollRatio": f"{roll[0] / roll[-1]:.2f}",
         "PitchNarrow": f"{pitch[0]:.1f}",
         "TorqueLo": f"{tor.min():.3f}", "TorqueHi": f"{tor.max():.3f}",
-        # Superseded sequential-criterion figures, quoted only in the note that
-        # explains why they changed.
-        **{f"XTrack{n}": f"{st['xt_max']:.2f}"
-           for n, st in zip(("Sixty", "Ninety", "OneTwenty"), fstats)},
-        # Figure 3's caption quoted the mean cross-track as a literal
-        # (0.28-0.33 m), which went stale when the flights were re-flown.
-        "XTrackMeanLo": f"{min(st['xt_mean'] for st in fstats):.2f}",
-        "XTrackMeanHi": f"{max(st['xt_mean'] for st in fstats):.2f}",
+        # Figure 3's cross-track, maximum per course and the mean range. The mean
+        # was a literal (0.28-0.33 m) until 2026-09-16.
+        **flight_macros(flight_stats(LOGS_REDUCED)),
         "PubBestSixty": "12.172", "PubBestNinety": "8.578",
         "PubBestOneTwenty": "7.078",
-        # The 2026-08-17 strict-criterion bests, measured on the plant without
-        # the gyroscopic term. Fixed, like PubBest*: they are history, and the
-        # "Revised 2026-08-17" paragraph compares against them.
-        "PrevBestSixty": "10.164", "PrevBestNinety": "8.367",
-        "PrevBestOneTwenty": "6.648",
+        # SUPERSEDED 2026-09-17: PrevBest* (10.164 / 8.367 / 6.648) held the
+        # reduced-model bests while Best* held the corrected ones. With Best*
+        # bound to the reduced model again they were identical, so they are gone.
         **speed_vals,
         **speed_semantics_vals(speed_vals),
-        **gate_speed_spread_vals(),
+        **gate_speed_spread_vals(RANKINGS_REDUCED, TABLE_REDUCED),
+        # Corrected model (gyroscopic term, k_m W^2 rotor drag, motor floor = w_min).
+        **column_macros(table_speeds(TABLE_CORRECTED), "Corr"),
+        **gate_speed_spread_vals(RANKINGS_CORRECTED, TABLE_CORRECTED, "Corr"),
+        **flight_macros(flight_stats(LOGS), "Corr"),
+        # Counterfactual attribution (docs/data/gyroscopic_counterfactual.md):
+        # quadratic yaw drag alone, and the corrected plant with a yaw-last mixer.
+        **column_macros(counterfactual_speeds("current_quadyaw"), "CfQuadYaw"),
+        **column_macros(counterfactual_speeds("physical_quadyaw_yawlast"), "CfYawLast"),
         "GearEnd": f"{gearing['first']:.2f}",
         "GearInterior": f"{gearing['interior']:.2f}",
         "GearRatio": f"{gearing['ratio']:.2f}",
@@ -562,11 +615,13 @@ if __name__ == "__main__":
     figure_morphologies(angles)
     figure_courses()
     gearing = figure_spline_parameter()
-    figure_flights(flight_stats())
-    (OUT.parent / "results_table.tex").write_text(results_table())
+    figure_flights(flight_stats(LOGS_REDUCED), "flights.pdf")
+    figure_flights(flight_stats(LOGS), "flights_corrected.pdf")
+    (OUT.parent / "results_table.tex").write_text(results_table(TABLE_REDUCED))
+    (OUT.parent / "results_table_corrected.tex").write_text(results_table(TABLE_CORRECTED))
     (OUT.parent / "numbers.tex").write_text(numbers_tex(angles, gearing))
     print(f"feasible half-angle range: {np.degrees(lo):.2f}-{np.degrees(hi):.2f} deg")
     print("wrote", OUT / "morphologies.pdf", OUT / "courses.pdf",
-          OUT / "spline_parameter.pdf", OUT / "flights.pdf",
-          OUT.parent / "results_table.tex", OUT.parent / "numbers.tex",
-          sep="\n      ")
+          OUT / "spline_parameter.pdf", OUT / "flights.pdf", OUT / "flights_corrected.pdf",
+          OUT.parent / "results_table.tex", OUT.parent / "results_table_corrected.tex",
+          OUT.parent / "numbers.tex", sep="\n      ")

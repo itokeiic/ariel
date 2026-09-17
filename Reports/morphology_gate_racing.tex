@@ -82,6 +82,11 @@ it is named, and an overdot denotes a rate of change with respect to time.
     (Appendix~\ref{sec:feedforward}) & \si{\metre\per\second\squared} \\
   $F$ & commanded force, $m(a_{\rm cmd} - g)$ & \si{\newton} \\
   $K_p,\ K_v$ & position and velocity feedback gains & --- \\
+  $W$ & rotor angular speed & \si{\radian\per\second} \\
+  $W_{\text{hover}}$ & rotor speed at hover & \si{\radian\per\second} \\
+  $W_{\min}$ & idle speed of the motor model, the lowest it runs at & \si{\radian\per\second} \\
+  $k_m$ & rotor drag-torque coefficient; a rotor's drag torque is $k_m W^2$ &
+    \si{\newton\metre\second\squared} \\
   $x,\ y,\ z$ & body-fixed axes, $x$ forward, $y$ right, $z$ down & \si{\metre} \\
   \bottomrule
 \end{tabular}
@@ -209,21 +214,27 @@ Two conditions matter for the numbers below. Feedforward of the reference veloci
 \section{Results}
 \label{sec:results}
 
+% Restored 2026-09-17 from commit 8d3174b (the Results section as it stood before
+% the corrected-model regeneration of 990594c). The model statement below, the
+% "reduced model" in two captions, the cross-track macros in the Figure 3 caption
+% and Section~\ref{sec:corrected} are new; the rest is the text of 8d3174b.
+% DRAFT (2026-09-17) -- for the author to reword.
+The results in this section were obtained with a \emph{reduced} simulation
+model: its rigid-body dynamics omit the gyroscopic term of Euler's equations, its
+rotor drag torque is linearised about hover, and the controller's lowest motor
+speed is set below the motor model's idle speed.
+Section~\ref{sec:corrected} repeats the measurements with those three items
+corrected and reports what changes.
+
 \begin{table}[htb]
   \centering
   \caption{Maximum completing speed (\si{\metre\per\second}) by arm half-angle
-  and corner sharpness. Bold marks the best in each column. Roll authority
-  $\alpha_\phi$ is in \si{\radian\per\second\squared} per newton.}
+  and corner sharpness, reduced model. Bold marks the best in each column. Roll
+  authority $\alpha_\phi$ is in \si{\radian\per\second\squared} per newton.}
   \label{tab:results}
   \input{results_table.tex}
 \end{table}
 
-% STALE 2026-09-16 (regenerated Table 1, gyroscopic plant) -- for the author.
-% Contradicted: at 60 deg the narrowest frame is not last (the two widest are
-% slower); at 120 deg it is LAST, and the widest is best; the optimum does not
-% migrate toward the narrow end but from the middle (60) to the wide end (90,
-% 120); the 120 deg ranking is not monotone (28.63 beats 36.81). See
-% docs/drone_morphology_gate_racing.md section 2.
 The narrow end swaps ends. At $60^\circ$ the narrowest frame, which has the
 highest roll authority, is \emph{last} (\SI{\NarrowSixty}{\percent}); at
 $120^\circ$ it is \emph{first}, and the widest frame is last
@@ -234,23 +245,12 @@ $\ArgmaxNinety^\circ$ at $90^\circ$, and $\ArgmaxOneTwenty^\circ$ at
 $120^\circ$. At $120^\circ$ the ranking is monotone in $t$ from best to worst,
 with no inversions.
 
-% STALE 2026-09-16 -- for the author. The spread no longer grows monotonically
-% with sharpness: 4.1 / 32.7 / 25.8 % (largest at 90 deg).
 So does the size of the effect. The spread across the family grows with corner
 sharpness---\SI{\SpreadSixty}{\percent} at $60^\circ$,
 \SI{\SpreadNinety}{\percent} at $90^\circ$, \SI{\SpreadOneTwenty}{\percent} at
 $120^\circ$---so geometry matters progressively more as the task gets harder,
 which is the same conclusion read a second way.
 
-% STALE 2026-09-16 -- for the author. The roll-authority mechanism predicts the
-% narrow frames winning at sharp corners, which the regenerated data contradicts.
-% The supported mechanism (pre-registered test, run on the pre-fix plant and not
-% yet repeated) is the yaw component of Omega x I Omega opposing the demanded yaw
-% on narrow frames beyond the rotors' yaw capacity; see the doc, section 8 item 4.
-% CORRECTED 2026-09-17: repeated on the fixed plant and NOT confirmed (equal-push
-% test refuted; docs/data/gyroscopic_mechanism_fixed_plant.md). The mechanism
-% behind the regenerated ranking is currently unexplained -- do not cite one.
-% "8.5 m/s on a 2.4 m leg" are literals from the old operating point.
 The mechanism is the one the authorities predict. Sharper corners demand faster
 bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
 drone has roughly a quarter of a second per corner---which rewards roll angular
@@ -273,15 +273,10 @@ distance to the gate centre over the whole flight, ignores \emph{when} that
 minimum occurred and so counts gates the drone passed beside rather than
 through. At the $90^\circ$ operating point the three criteria score the same
 flight 15/15, 15/15 and 8/15. Under the criterion defined above the best body
-reaches \SI{\PrevBestSixty}{\metre\per\second} at $60^\circ$ against
+reaches \SI{\BestSixty}{\metre\per\second} at $60^\circ$ against
 \SI{\PubBestSixty}{\metre\per\second} previously (\SI{-16.5}{\percent}),
-\SI{\PrevBestNinety}{\metre\per\second} at $90^\circ$ (\SI{-2.5}{\percent}) and
-\SI{\PrevBestOneTwenty}{\metre\per\second} at $120^\circ$ (\SI{-6.1}{\percent}).
-% FIXED 2026-09-16: these three compared \Best* with \PubBest*. \Best* now holds
-% the regenerated (gyroscopic-plant) bests, so the percentages would have been
-% false; \PrevBest* holds the 2026-08-17 strict values this paragraph is about.
-% STALE 2026-09-16: "unchanged in direction ... now sits at the narrow end with a
-% monotone ranking" was true on the 2026-08-17 plant, not on the regenerated one.
+\SI{\BestNinety}{\metre\per\second} at $90^\circ$ (\SI{-2.5}{\percent}) and
+\SI{\BestOneTwenty}{\metre\per\second} at $120^\circ$ (\SI{-6.1}{\percent}).
 The conclusion is unchanged in direction and cleaner in form: previously the
 $120^\circ$ optimum sat mid-family, and it now sits at the narrow end with a
 monotone ranking behind it. Full account in
@@ -290,12 +285,13 @@ monotone ranking behind it. Full account in
 \begin{figure}[htb]
   \centering
   \includegraphics[width=\textwidth]{figures/flights.pdf}
-  \caption{Reference against reality, each course flown by its own best airframe
-  at its own limiting speed. Grey is the B-spline the controller is given; blue
-  is the path actually flown; green bars are the fifteen scored gates, all
-  passed at these operating points. The drone does not track the reference---it
-  lags in phase and \emph{overshoots} the weave, flying a wider amplitude than
-  asked, by a mean of \SIrange{\XTrackMeanLo}{\XTrackMeanHi}{\metre} and a maximum of
+  \caption{Reference against reality on the reduced model, each course flown by
+  its own best airframe at its own limiting speed. Grey is the B-spline the
+  controller is given; blue is the path actually flown; green bars are the
+  fifteen scored gates, all passed at these operating points. The drone does not
+  track the reference---it lags in phase and \emph{overshoots} the weave, flying
+  a wider amplitude than asked, by a mean of
+  \SIrange{\XTrackMeanLo}{\XTrackMeanHi}{\metre} and a maximum of
   \SI{\XTrackNinety}{\metre}. Against the \SI{0.5}{\metre} gate radius that
   is most of the margin, which is why raising the speed a little above these
   values starts missing gates rather than degrading smoothly: the limit is set
@@ -306,16 +302,6 @@ monotone ranking behind it. Full account in
   \label{fig:flights}
 \end{figure}
 
-% STALE 2026-09-16 -- for the author. (1) "34 deg of yaw amplitude against 60
-% commanded, crabs 20 deg" and "+/-78 against +/-28" are literals from the old
-% 90 deg flight (t=36.81 at its 2026-08-17 limit, \PrevBestNinety), which has
-% been re-flown. (2) "the comparison
-% is unaffected ... the lag is common-mode" no longer holds: with the gyroscopic
-% term the yaw disturbance (Ixx-Iyy)pq differs across the family, and it is the
-% mechanism behind the regenerated ranking. [CORRECTED 2026-09-17: that it drives
-% the ranking was not confirmed on the fixed plant; only "not common-mode" holds.]
-% Yaw authority per newton itself is
-% unchanged (geometry only).
 \paragraph{Heading, and the limits of the roll argument.} Yaw is commanded to
 follow the trajectory tangent, which is both what the gate geometry describes
 and what a vision-guided racer must do. The airframe cannot fully deliver it:
@@ -402,8 +388,6 @@ each column is divided by a different factor. All of this is measured on the
 reference trajectory alone by \texttt{docs/tools/speed\_semantics.py}.
 
 % DRAFT (open item 9, 2026-09-11) -- for the author to reword.
-% STALE 2026-09-16: "the spread still grows with corner sharpness" is false on
-% the regenerated data; the ranking-unchanged claim is still asserted by the build.
 Re-expressed as the reference's median speed at the gates, with each airframe
 at its own limiting speed, the within-column spreads quoted above shrink to
 \SI{\GateSpreadSixty}{\percent}, \SI{\GateSpreadNinety}{\percent} and
@@ -413,8 +397,6 @@ so discounts the fastest airframes most. The ranking within every column is
 unchanged, and the spread still grows with corner sharpness. These are the
 reference's speeds at the gates, not the drone's, which lags behind it.
 
-% STALE 2026-09-16 -- for the author. On the regenerated data the 60 deg column has
-% a single best (not a plateau), and the 120 deg ranking is not monotone in t.
 \paragraph{Limits.} The $60^\circ$ plateau is at resolution: \NTiesSixty{}
 bodies lie within the \SI{0.0625}{\metre\per\second} bisection tolerance of the
 best, so that column establishes only that both extremes are worse than the
@@ -428,23 +410,115 @@ construction, but the \emph{achievable} one is not, since torque margin and
 motor saturation differ with geometry; a per-airframe tuning could therefore
 still move the ranking.
 
-% DRAFT (open item 4, 2026-09-16) -- for the author to reword.
-% OBSOLETE 2026-09-16 (later the same day): the plant now integrates the term and
-% Table 1 is regenerated with it, so this caveat describes a limitation that no
-% longer applies. Replace with a statement of what changed, or delete.
-% 2026-09-17: its mechanism sentence ("opposes the yaw a slalom demands on narrow
-% frames ...") was also not confirmed on the fixed plant.
-% Source: docs/data/gyroscopic_counterfactual.md and docs/data/gyroscopic_mechanism.md.
-More seriously, the simulated plant omits the gyroscopic term
-$\Omega\times I\Omega$ of Euler's equations. The attitude controller cancels that
-term, so on this plant the cancellation injects a torque instead. MuJoCo
-includes the term, and PhysX enables it by default. Restoring it shifts the
-optimum to wider frames at $90^\circ$ and $120^\circ$, reversing the trend
-reported here, with either of two motor-mixing schemes tested. The term's yaw
-component opposes the yaw a slalom demands on narrow frames and assists it on
-wide ones. On the most asymmetric frames it exceeds the yaw torque the rotors can
-produce. The ranking above should therefore be read as a property of the reduced
-plant until it is regenerated with the full rigid-body dynamics.
+\subsection{Corrected rigid-body model}
+\label{sec:corrected}
+
+% DRAFT (2026-09-17) -- for the author to reword. Sources:
+% docs/data/tuned_strict_completion.csv (Table 3), docs/data/flight_logs/
+% (Figure 5), docs/data/gyroscopic_counterfactual.md (attribution),
+% docs/data/gyroscopic_mechanism.md and gyroscopic_mechanism_fixed_plant.md
+% (mechanism); account in docs/drone_morphology_gate_racing.md, section 8
+% items 4 and 17.
+Three simplifications of the reduced model were found after the results above
+were obtained, and the measurements were repeated without them.
+Table~\ref{tab:models} lists what differs. Everything else is identical: the
+controller and its gains, the motor mixer, the courses, the scoring and the
+bisection. The two earlier model corrections, thrust along each rotor's own axis
+and the full inertia tensor, change nothing for this family, whose rotors are
+coplanar and axial and whose body axes are principal: the code at commit
+\texttt{8d3174b}, which already contains both, reproduces every cell of
+Table~\ref{tab:results}.
+
+\begin{table}[htb]
+  \centering
+  \caption{What differs between the reduced and corrected models.}
+  \label{tab:models}
+  \small
+  \begin{tabular}{@{}l l l@{}}
+    \toprule
+    & reduced (Table~\ref{tab:results}) & corrected (Table~\ref{tab:corrected}) \\
+    \midrule
+    gyroscopic term $\Omega\times I\Omega$ in the plant & omitted & integrated \\
+    rotor drag torque, about each rotor axis & $2k_m W_{\text{hover}} W$ & $k_m W^2$ \\
+    lowest motor speed the controller assumes & \SI{75}{\radian\per\second} &
+      $W_{\min}$, \SI{238.49}{\radian\per\second} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The three items, in order. The attitude controller adds $\Omega\times I\Omega$
+to cancel the gyroscopic term; the reduced plant never integrated that term, so
+the cancellation acted as a torque injected into the flight, one that differed
+across the family. The controller allocates motor speeds assuming a drag torque of
+$k_m W^2$, with the same $k_m$ the plant uses, but the reduced plant used the
+tangent to that curve at hover, which delivers less yaw torque whenever the
+motors run faster than hover, as they do in these corners. And the controller's
+lowest motor speed, \SI{75}{\radian\per\second}, was a default inherited from
+another simulator, below the idle speed $W_{\min}$ of the identified motor model;
+commands below $W_{\min}$ were raised to it by the plant, so correcting it moves
+no measured speed.
+
+\begin{table}[htb]
+  \centering
+  \caption{Maximum completing speed (\si{\metre\per\second}) by arm half-angle
+  and corner sharpness, corrected model. Bold marks the best in each column, as
+  in Table~\ref{tab:results}.}
+  \label{tab:corrected}
+  \input{results_table_corrected.tex}
+\end{table}
+
+The corrected model reverses the trend at the sharper corners
+(Table~\ref{tab:corrected}). At $60^\circ$ the middle of the family is still best,
+at $\CorrArgmaxSixty^\circ$. At $90^\circ$ the best bodies are
+$\CorrArgmaxNinety^\circ$, and at $120^\circ$ they are
+$\CorrArgmaxOneTwenty^\circ$; the narrowest frame, first at $120^\circ$ in
+Table~\ref{tab:results}, is now last at both, by
+\SI{\CorrNarrowNinety}{\percent} and \SI{\CorrNarrowOneTwenty}{\percent}. The
+spread across the family is \SI{\CorrSpreadSixty}{\percent},
+\SI{\CorrSpreadNinety}{\percent} and \SI{\CorrSpreadOneTwenty}{\percent}: larger
+than in the reduced model at the two sharper corners, and no longer growing
+monotonically with sharpness. No single static geometry is best across the
+difficulty range in either model; which end of the family wins at sharp corners
+depends on the model.
+
+The reversal comes from the gyroscopic term, not from the drag correction or the
+mixer. With the drag correction alone, narrow-to-middle frames stay best:
+$\CfQuadYawArgmaxNinety^\circ$ at $90^\circ$ and
+$\CfQuadYawArgmaxOneTwenty^\circ$ at $120^\circ$. With the gyroscopic term and
+the drag correction, and a mixer that gives up yaw first when the motors
+saturate, the wide end still wins: $\CfYawLastArgmaxNinety^\circ$ and $\CfYawLastArgmaxOneTwenty^\circ$. This
+also qualifies the reduced model's heading argument above: there, the
+controller's cancellation was itself a yaw-coupled torque that varied across the
+family, so the yaw channel was not strictly common-mode even then.
+
+\emph{Why} the wide frames win is not established. On the reduced model, a
+pre-registered test supported a yaw mechanism: the yaw component of the
+gyroscopic term opposes the yaw a slalom demands on narrow frames, beyond what
+the rotors can supply. On the corrected model the same test was inconclusive on
+its correlation criterion and refuted on its saturation criterion. A confirmatory
+test that flew every airframe at the same fraction of its own limit refuted its
+central prediction, that the narrowest frame saturates yaw most; its causal part,
+removing the controller's cancellation, was inconclusive.
+
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=\textwidth]{figures/flights_corrected.pdf}
+  \caption{Reference against reality on the corrected model, each course flown by
+  the first of its best airframes in Table~\ref{tab:corrected} at its own limiting
+  speed; colours as in Figure~\ref{fig:flights}. The mean cross-track overshoot is
+  \SIrange{\CorrXTrackMeanLo}{\CorrXTrackMeanHi}{\metre} and the maximum
+  \SI{\CorrXTrackMax}{\metre}.}
+  \label{fig:flights_corrected}
+\end{figure}
+
+\paragraph{Limits of the corrected results.} The motor mixer is unchanged: it
+clips each motor independently, so a yaw demand beyond what the rotors can supply
+also distorts thrust, roll and pitch; a mixer that gives up yaw first was tried
+only as the check above. The quadratic drag form was chosen so the plant matches
+the controller's allocation, whereas the identified motor model this plant was
+ported from is linear in motor speed. The controller tuning was not revisited
+for the corrected model, and the heading figures quoted above (yaw amplitude,
+sideslip, roll and pitch excursions) were measured on the reduced model only.
 
 \section{Implication}
 
@@ -484,12 +558,22 @@ latexmk -pdf -cd Reports/morphology\_gate\_racing.tex
 % inputs are relative to Reports/. -cd builds in the file's own directory.
 
 \begin{sloppypar}
-Source data: \texttt{tuned\_strict\_completion.csv}, all three turn angles under
-the strict gate criterion; \texttt{speed\_semantics\_rankings.csv}, derived from
-it by \texttt{docs/tools/speed\_semantics.py}; and the Figure~\ref{fig:flights}
-flight logs in \texttt{docs/data/flight\_logs/}.
+Source data, all under the strict gate criterion. Reduced model
+(Section~\ref{sec:results}): \texttt{tuned\_strict\_completion\_reduced\_model.csv},
+\texttt{speed\_semantics\_rankings\_reduced\_model.csv} and the
+Figure~\ref{fig:flights} logs in \texttt{docs/data/flight\_logs/reduced\_model/},
+restored from commit \texttt{8d3174b}. Corrected model
+(Section~\ref{sec:corrected}): \texttt{tuned\_strict\_completion.csv},
+\texttt{speed\_semantics\_rankings.csv} and the Figure~\ref{fig:flights_corrected}
+logs in \texttt{docs/data/flight\_logs/}; its attribution figures come from
+\texttt{docs/data/gyroscopic\_counterfactual/}. The rankings files are derived
+from the tables by \texttt{docs/tools/speed\_semantics.py}.
 % Corrected 2026-09-16: this listed only tuned_strict_completion.csv, but
-% make_figures.py also reads the rankings CSV and the three flight logs. The superseded sequential-criterion runs
+% make_figures.py also reads the rankings CSV and the three flight logs.
+% Corrected 2026-09-17: the 2026-09-16 comment above ended on the same line as
+% "The superseded sequential-criterion runs", which it commented out of the PDF;
+% and the report now draws on two model versions, listed above.
+The superseded sequential-criterion runs
 (\texttt{tuned\_60deg.csv}, \texttt{tuned\_90deg.csv},
 \texttt{tuned\_60\_120deg.csv}) are retained for comparison but no longer feed
 this report. Commands, the

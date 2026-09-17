@@ -53,7 +53,11 @@ import numpy as np
 
 warnings.simplefilter("ignore")
 REPO = Path(__file__).resolve().parents[2]
-TABLE1 = REPO / "docs" / "data" / "tuned_strict_completion.csv"
+# The Table 1 these counterfactuals compare against is the REDUCED model's, which
+# `current` reproduces. Until 2026-09-17 this pointed at tuned_strict_completion.csv,
+# which has held the corrected model's Table 1 since 990594c; the reduced-model file
+# was restored from commit 8d3174b so `summarise` keeps comparing like with like.
+TABLE1 = REPO / "docs" / "data" / "tuned_strict_completion_reduced_model.csv"
 VARIANTS = {  # name: (plant integrates the term, controller cancels it, mixer, plant yaw drag)
     "current": (False, True, "clip", "lin"),
     "physical": (True, True, "clip", "lin"),
@@ -101,9 +105,18 @@ def summarise(d: Path) -> str:
                     continue
                 sp = [run[k]["max_speed"] for k in ks]
             best = max(sp)
-            ties = [col[i][0] for i, s in enumerate(sp) if best - s < 0.0625]
+            idx = [i for i, s in enumerate(sp) if best - s < 0.0625]
+            ties = [col[i][0] for i in idx]
             order = sorted(range(len(sp)), key=lambda i: (sp[i], i))
-            arg = (f"{ties[0]:.2f}" if len(ties) == 1 else f"{ties[0]:.2f}-{ties[-1]:.2f}")
+            # A range claims every body between its ends ties too; list non-adjacent
+            # ties instead (fixed 2026-09-17: physical_quadyaw at 90 deg read
+            # "45.00-69.56", but 53.19 and 61.37 do not tie).
+            if len(ties) == 1:
+                arg = f"{ties[0]:.2f}"
+            elif idx == list(range(idx[0], idx[-1] + 1)):
+                arg = f"{ties[0]:.2f}-{ties[-1]:.2f}"
+            else:
+                arg = ", ".join(f"{a:.2f}" for a in ties)
             lines.append(f"| {turn:.0f}° | {n} | {arg} | {100 * (best - min(sp)) / best:.1f}% | "
                          f"{'yes' if order == ref_order else 'no'} |")
     return "\n".join(lines) + "\n"

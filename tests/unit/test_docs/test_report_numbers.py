@@ -43,6 +43,12 @@ def test_results_table_regenerates_unchanged() -> None:
     assert mf.results_table() == committed, "rerun Reports/make_figures.py"
 
 
+def test_corrected_results_table_regenerates_unchanged() -> None:
+    """The corrected-model table (Results' last subsection) still matches its CSV."""
+    committed = (REPO / "Reports" / "results_table_corrected.tex").read_text()
+    assert mf.results_table(mf.TABLE_CORRECTED) == committed, "rerun Reports/make_figures.py"
+
+
 def test_report_quotes_no_literal_numbers_for_generated_quantities() -> None:
     """The prose uses the macros, so the values cannot be edited out of sync."""
     tex = TEX.read_text()

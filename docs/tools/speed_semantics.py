@@ -201,7 +201,31 @@ def rankings_table(res: dict[float, dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def write_rankings_csv(res: dict[float, dict], path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["turn_deg", "half_angle_deg", "max_speed", "gate_speed_median"])
+        for turn, r in res.items():
+            for t, v, g in r["rows"]:
+                w.writerow([turn, t, v, g])
+
+
 if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--table", type=Path, default=TABLE1,
+                    help="Table 1 CSV to read the operating points from")
+    ap.add_argument("--rankings-out", type=Path, default=None,
+                    help="write ONLY the rankings CSV, here (e.g. for the reduced model's "
+                         "docs/data/tuned_strict_completion_reduced_model.csv). The "
+                         "reference trajectory does not depend on the plant, so this "
+                         "reproduces on current code.")
+    cli = ap.parse_args()
+    if cli.rankings_out is not None:
+        write_rankings_csv(gate_speed_rankings(cli.table), cli.rankings_out)
+        print(f"wrote {cli.rankings_out}")
+        raise SystemExit(0)
     rows = [measure(t, v) for t, v in cases()]
     md = table(rows)
     OUT.write_text(md)
@@ -212,10 +236,5 @@ if __name__ == "__main__":
     RANKINGS_OUT.write_text(rk)
     print(rk)
     print(f"wrote {RANKINGS_OUT.relative_to(REPO)}")
-    with open(RANKINGS_CSV, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["turn_deg", "half_angle_deg", "max_speed", "gate_speed_median"])
-        for turn, r in res.items():
-            for t, v, g in r["rows"]:
-                w.writerow([turn, t, v, g])
+    write_rankings_csv(res, RANKINGS_CSV)
     print(f"wrote {RANKINGS_CSV.relative_to(REPO)}")
