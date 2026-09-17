@@ -1,0 +1,32 @@
+{
+ "90@20.44": {
+  "max_speed": 5.5546875,
+  "monotone": true,
+  "bracket": "ok"
+ },
+ "90@45.00": {
+  "max_speed": 8.25,
+  "monotone": true,
+  "bracket": "ok"
+ },
+ "90@69.56": {
+  "max_speed": 8.2109375,
+  "monotone": true,
+  "bracket": "ok"
+ },
+ "120@20.44": {
+  "max_speed": 5.28125,
+  "monotone": true,
+  "bracket": "ok"
+ },
+ "120@45.00": {
+  "max_speed": 6.6875,
+  "monotone": true,
+  "bracket": "ok"
+ },
+ "120@69.56": {
+  "max_speed": 7.1171875,
+  "monotone": true,
+  "bracket": "ok"
+ }
+}

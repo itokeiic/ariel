@@ -44,6 +44,9 @@ it is named, and an overdot denotes a rate of change with respect to time.
   $\tau$ & propeller clearance tolerance, \num{0.1} & --- \\
   $I$ & body inertia tensor about the centre of gravity & \si{\kilo\gram\metre\squared} \\
   $I_{ij}$ & its $(i,j)$ entry; $i \neq j$ are the products of inertia & \si{\kilo\gram\metre\squared} \\
+  $I_{xx}$ & moment of inertia about $x$ & \si{\kilo\gram\metre\squared} \\
+  $I_{yy}$ & moment of inertia about $y$ & \si{\kilo\gram\metre\squared} \\
+  $I_{zz}$ & moment of inertia about $z$ & \si{\kilo\gram\metre\squared} \\
   $B_M$ & moment allocation matrix, column $i$ the moment per newton of rotor $i$ & \si{\metre} \\
   $\alpha_\phi,\ \alpha_\theta,\ \alpha_\psi$ & roll, pitch and yaw
     angular-acceleration authority, the row norms of $I^{-1}B_M$ &
@@ -69,6 +72,9 @@ it is named, and an overdot denotes a rate of change with respect to time.
    & its $-3$\,dB bandwidth is $0.644\,\omega_n$ at $\zeta=1$ & \\
   $\zeta$ & commanded closed-loop damping ratio; \num{1} is critical damping & --- \\
   $\Omega$ & body angular rate & \si{\radian\per\second} \\
+  $\Omega_x$ & roll rate, the $x$ component of $\Omega$ & \si{\radian\per\second} \\
+  $\Omega_y$ & pitch rate, the $y$ component of $\Omega$ & \si{\radian\per\second} \\
+  $\Omega_z$ & yaw rate, the $z$ component of $\Omega$ & \si{\radian\per\second} \\
   $K_R,\ K_\Omega$ & attitude proportional and rate gains, $K_R=\omega_n^2 I$ and
     $K_\Omega = 2\zeta\omega_n I$ & --- \\
   $m,\ g$ & total mass and gravitational acceleration & \si{\kilogram},
@@ -491,14 +497,51 @@ also qualifies the reduced model's heading argument above: there, the
 controller's cancellation was itself a yaw-coupled torque that varied across the
 family, so the yaw channel was not strictly common-mode even then.
 
-\emph{Why} the wide frames win is not established. On the reduced model, a
-pre-registered test supported a yaw mechanism: the yaw component of the
-gyroscopic term opposes the yaw a slalom demands on narrow frames, beyond what
-the rotors can supply. On the corrected model the same test was inconclusive on
-its correlation criterion and refuted on its saturation criterion. A confirmatory
-test that flew every airframe at the same fraction of its own limit refuted its
-central prediction, that the narrowest frame saturates yaw most; its causal part,
-removing the controller's cancellation, was inconclusive.
+% DRAFT (2026-09-17, hypothesis-divergence session) -- for the author to reword.
+% Sources: docs/data/gyroscopic_axis_attribution.md and gyroscopic_yaw_path.md;
+% criteria pre-registered in the docstrings of docs/tools/gyroscopic_axis_attribution.py
+% and gyroscopic_yaw_path.py; account in the doc, section 8 item 4. Every verdict
+% below is asserted by Reports/make_figures.py.
+\emph{Why} the wide frames win. Every frame in this family has the same
+$I_{zz}$, and because rotors and arms lie in one plane, $I_{zz}$ is almost exactly
+$I_{xx}+I_{yy}$. Euler's equations then make the gyroscopic accelerations about
+roll and pitch nearly the same for every frame,
+$\dot\Omega_x \approx -\Omega_y\Omega_z$ and $\dot\Omega_y \approx \Omega_x\Omega_z$,
+with coefficients of magnitude \EulerRPMin{} to \EulerRPMax{}. Only the yaw
+coupling depends on geometry,
+\[
+  \dot\Omega_z = \frac{I_{xx}-I_{yy}}{I_{zz}}\,\Omega_x\Omega_y ,
+\]
+with a coefficient that runs from $\EulerYawNarrow$ on the narrowest frame, through
+zero on the X quad, to $+\EulerYawWide$ on the widest. It changes sign across the
+family, and it acts on the axis the rotors control most weakly. Roll authority on
+its own does favour the narrow frames: without any gyroscopic coupling, the
+narrowest frame is the fastest of the three tested at $90^\circ$.
+
+Two pre-registered tests on the corrected model trace the reversal to this yaw
+coupling. The first kept the gyroscopic term, in both plant and controller, on
+one body axis at a time. The yaw axis alone reproduces
+\SI{\GyAxisZLossNinety}{\percent} and \SI{\GyAxisZLossOneTwenty}{\percent} of the
+narrow frame's loss at $90^\circ$ and $120^\circ$, and
+\SI{\GyAxisZGainOneTwenty}{\percent} of the wide frame's gain at $120^\circ$.
+Pitch reproduces at most \SI{\GyAxisYLossMax}{\percent} of the loss, and roll none
+of it. The second separated plant from controller on the yaw axis. The yaw torque
+acting in the plant reproduces all of the narrow frame's loss
+(\SI{\GyPlantLossNinety}{\percent} and \SI{\GyPlantLossOneTwenty}{\percent}), even
+when the controller does not cancel it. The controller's cancellation acting
+alone has the mirror effect: it raises the narrow frame's limit and lowers the
+wide frame's. That mirror effect is a plausible but untested account of the
+reduced model's opposite ranking, since its controller injected the term its
+plant lacked.
+
+How the yaw torque turns into missed gates is not established. Yaw saturation,
+supported on the reduced model, was not confirmed on the corrected one: flown at
+the same fraction of its own limit, the narrowest frame does not saturate yaw
+most. Nor does the coupling act through heading lag or crab at the gates. Flown at
+the same speed with and without it, just below its limit, the narrow frame's heading
+error at the gates changes by a factor of \GyHeadingNarrowNinety{} at $90^\circ$
+and \GyHeadingNarrowOneTwenty{} at $120^\circ$, and its crab angle by
+\GyCrabNarrowNinety{} and \GyCrabNarrowOneTwenty{}, where growth was predicted.
 
 \begin{figure}[htb]
   \centering
@@ -566,7 +609,9 @@ restored from commit \texttt{8d3174b}. Corrected model
 (Section~\ref{sec:corrected}): \texttt{tuned\_strict\_completion.csv},
 \texttt{speed\_semantics\_rankings.csv} and the Figure~\ref{fig:flights_corrected}
 logs in \texttt{docs/data/flight\_logs/}; its attribution figures come from
-\texttt{docs/data/gyroscopic\_counterfactual/}. The rankings files are derived
+\texttt{docs/data/gyroscopic\_counterfactual/}, and the cause of its reversal from
+\texttt{docs/data/gyroscopic\_axis\_attribution/} and
+\texttt{docs/data/gyroscopic\_yaw\_path/}. The rankings files are derived
 from the tables by \texttt{docs/tools/speed\_semantics.py}.
 % Corrected 2026-09-16: this listed only tuned_strict_completion.csv, but
 % make_figures.py also reads the rankings CSV and the three flight logs.

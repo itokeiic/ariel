@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import json
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -558,6 +559,78 @@ def flight_macros(stats: list[dict], prefix: str = "") -> dict[str, str]:
     }
 
 
+def _tool_functions(name: str) -> dict:
+    """The definitions in docs/tools/<name>.py, without running its simulation.
+
+    The investigation tools are scripts: after their `summarise` branch they bind
+    the sweep's CLI and start simulating. Only the part before that branch -- the
+    imports, constants and the pre-registered `score` function -- is executed, so
+    the report states exactly the verdicts the tool computes.
+    """
+    src = (REPO / "docs" / "tools" / f"{name}.py").read_text()
+    head = src[:src.index('if __name__ == "__main__" and len(sys.argv) > 1')]
+    ns: dict = {"__file__": str(REPO / "docs" / "tools" / f"{name}.py"), "__name__": name}
+    exec(compile(head, ns["__file__"], "exec"), ns)
+    return ns
+
+
+def gyroscopic_mechanism_vals() -> dict[str, str]:
+    """Why the corrected model reverses the ranking (2026-09-17), as macros.
+
+    Geometry: the Euler-equation gyroscopic coefficients across the family.
+    Tests: docs/tools/gyroscopic_axis_attribution.py and gyroscopic_yaw_path.py,
+    both pre-registered. Every verdict the report states is asserted here, so the
+    prose cannot outlive the data behind it.
+    """
+    lo, hi = feasible_range()
+    coeffs = []
+    for t in np.linspace(lo, hi, 7):
+        props = blueprint_to_propellers(
+            spherical_angular_to_blueprint(genome(float(t)), propsize=PROP_SIZE), convention="ned")
+        Ixx, Iyy, Izz = np.diag(DroneConfiguration(props, payload_mass=PAYLOAD).inertia_matrix)
+        coeffs.append(((Iyy - Izz) / Ixx, (Izz - Ixx) / Iyy, (Ixx - Iyy) / Izz, Ixx, Iyy, Izz))
+    c = np.array(coeffs)
+    izz = c[:, 5]
+    assert izz.max() - izz.min() < 1e-6 * izz.max(), "Izz is supposed to be the same for every frame"
+    assert np.all(np.abs(izz - (c[:, 3] + c[:, 4])) < 0.02 * izz), "Izz ~ Ixx + Iyy (planar body)"
+    rp = np.abs(c[:, :2])
+
+    ax_tool = _tool_functions("gyroscopic_axis_attribution")
+    runs = {k: json.loads((DATA / "gyroscopic_axis_attribution" / f"{k}.json").read_text())
+            for k in ax_tool["CONDITIONS"]}
+    ax = ax_tool["score"](runs)
+    assert (ax["H-yaw"], ax["H-pitch"], ax["H-interaction"]) == ("SUPPORTED", "REFUTED", "REFUTED"), ax
+    assert max(l["fraction"] for l in ax["axes"]["x"]["loss"]) <= 0.05, "roll reproduces none of the loss"
+    none90 = {h: runs["none"][f"90@{h:.2f}"]["max_speed"] for h in (20.44, 45.00, 69.56)}
+    assert none90[20.44] == max(none90.values()), "narrow frame fastest at 90 deg without coupling"
+
+    yaw_tool = _tool_functions("gyroscopic_yaw_path")
+    yp = yaw_tool["score"](DATA / "gyroscopic_yaw_path")
+    assert yp["A"] == "A-plant", yp["A"]
+    lim = yp["limits"]
+    for turn in ("90", "120"):   # controller-only has the mirror effect
+        assert lim["Zc"][f"{turn}@20.44"]["max_speed"] > lim["N"][f"{turn}@20.44"]["max_speed"]
+        assert lim["Zc"][f"{turn}@69.56"]["max_speed"] < lim["N"][f"{turn}@69.56"]["max_speed"]
+    assert yp["B-heading"]["verdict"] == "REFUTED" and yp["B-crab"]["verdict"] == "REFUTED"
+
+    z, y = ax["axes"]["z"], ax["axes"]["y"]
+    pct = lambda f: f"{100 * f:.0f}"  # noqa: E731
+    return {
+        "EulerRPMin": f"{rp.min():.2f}", "EulerRPMax": f"{rp.max():.2f}",
+        "EulerYawNarrow": f"{c[0, 2]:.2f}", "EulerYawWide": f"{c[-1, 2]:.2f}",
+        "GyAxisZLossNinety": pct(z["loss"][0]["fraction"]),
+        "GyAxisZLossOneTwenty": pct(z["loss"][1]["fraction"]),
+        "GyAxisZGainOneTwenty": pct(next(g for g in z["gain"] if g["turn"] == 120.0)["fraction"]),
+        "GyAxisYLossMax": pct(max(l["fraction"] for l in y["loss"])),
+        "GyPlantLossNinety": pct(yp["a"]["Zp"]["coverage"][0]["fraction"]),
+        "GyPlantLossOneTwenty": pct(yp["a"]["Zp"]["coverage"][1]["fraction"]),
+        "GyHeadingNarrowNinety": f"{yp['B-heading']['ratios']['90@20.44']:.2f}",
+        "GyHeadingNarrowOneTwenty": f"{yp['B-heading']['ratios']['120@20.44']:.2f}",
+        "GyCrabNarrowNinety": f"{yp['B-crab']['ratios']['90@20.44']:.2f}",
+        "GyCrabNarrowOneTwenty": f"{yp['B-crab']['ratios']['120@20.44']:.2f}",
+    }
+
+
 def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> str:
     """Every number quoted inline in the report, as macros.
 
@@ -601,6 +674,8 @@ def numbers_tex(angles: np.ndarray, gearing: dict[str, float] | None = None) -> 
         # quadratic yaw drag alone, and the corrected plant with a yaw-last mixer.
         **column_macros(counterfactual_speeds("current_quadyaw"), "CfQuadYaw"),
         **column_macros(counterfactual_speeds("physical_quadyaw_yawlast"), "CfYawLast"),
+        # Why the corrected model reverses the ranking (pre-registered tests).
+        **gyroscopic_mechanism_vals(),
         "GearEnd": f"{gearing['first']:.2f}",
         "GearInterior": f"{gearing['interior']:.2f}",
         "GearRatio": f"{gearing['ratio']:.2f}",

@@ -1,0 +1,116 @@
+{
+ "90@20.44": {
+  "speed": 5.9820312499999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 33.6034813773698,
+   "CR_gates_deg": 12.372414337033568,
+   "beta_gates_deg": 1.0235982009139395,
+   "offset_gates_m": 0.14936113281969826
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 32.20542341914961,
+   "CR_gates_deg": 9.988866895110085,
+   "beta_gates_deg": 5.4211848657526795,
+   "offset_gates_m": 0.14002939062429828
+  }
+ },
+ "90@45.00": {
+  "speed": 7.9488281249999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 38.06247908523327,
+   "CR_gates_deg": 19.111049930210992,
+   "beta_gates_deg": 3.35468938450552,
+   "offset_gates_m": 0.21775814663787546
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 38.05943268354403,
+   "CR_gates_deg": 19.12807159462721,
+   "beta_gates_deg": 3.355516295329496,
+   "offset_gates_m": 0.2176762903332465
+  }
+ },
+ "90@69.56": {
+  "speed": 7.7261718749999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 33.8201052952471,
+   "CR_gates_deg": 21.47664547922095,
+   "beta_gates_deg": 3.27829388864277,
+   "offset_gates_m": 0.19869297799077848
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 35.408973101809686,
+   "CR_gates_deg": 16.874411617773664,
+   "beta_gates_deg": 3.653707924363443,
+   "offset_gates_m": 0.18182176194666294
+  }
+ },
+ "120@20.44": {
+  "speed": 5.3140624999999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 40.84926932409427,
+   "CR_gates_deg": 16.067365209705525,
+   "beta_gates_deg": 1.5683703101001925,
+   "offset_gates_m": 0.18008180914752217
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 32.4682104696574,
+   "CR_gates_deg": 11.54473558220271,
+   "beta_gates_deg": 5.007339294059608,
+   "offset_gates_m": 0.16250424638653188
+  }
+ },
+ "120@45.00": {
+  "speed": 6.5757812499999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 31.676025229001826,
+   "CR_gates_deg": 32.86436936261699,
+   "beta_gates_deg": 2.8750566454246402,
+   "offset_gates_m": 0.1851289552283852
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 31.0071839495228,
+   "CR_gates_deg": 33.06269271625512,
+   "beta_gates_deg": 2.8213516701495904,
+   "offset_gates_m": 0.18826334257963123
+  }
+ },
+ "120@69.56": {
+  "speed": 6.2789062499999995,
+  "N": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 32.13415179972928,
+   "CR_gates_deg": 30.237262248412854,
+   "beta_gates_deg": 3.2690221973885993,
+   "offset_gates_m": 0.0991048397848762
+  },
+  "Z": {
+   "completed": true,
+   "gates_passed": 15,
+   "HE_gates_deg": 35.13932619836317,
+   "CR_gates_deg": 26.61054335836774,
+   "beta_gates_deg": 4.587313589304638,
+   "offset_gates_m": 0.09563402734983618
+  }
+ }
+}

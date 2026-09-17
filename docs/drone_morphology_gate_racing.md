@@ -263,6 +263,12 @@ repeated on this one.
 > * So yaw saturation from the gyroscopic term does not explain the narrow
 >   frames' loss on the plant that produced this table. The mechanism behind the
 >   regenerated ranking is currently unexplained. The paragraph above is kept.
+>
+> **Cause localised later on 2026-09-17.** Two pre-registered tests attribute the
+> reversal to the yaw component of the gyroscopic coupling acting on the vehicle,
+> $\frac{I_{xx}-I_{yy}}{I_{zz}}\,pq$. Kept on the yaw axis alone, it reproduces 74% /
+> 79% of the narrow frame's loss at 90° / 120°, and the controller's cancellation
+> cannot undo it. How it becomes missed gates is still open. See §8 item 4.
 
 *(2026-09-17: the report keeps both results. Its Results section presents the
 reduced-model result below, restored from commit `8d3174b`, and its last
@@ -1704,6 +1710,9 @@ family: it is set by the weakest channel, and the weakest channel is yaw.)
 >     yaw torque does differ across the family, so yaw is not common-mode. But
 >     the fixed-plant tests did not establish that it shapes the ranking; see
 >     the note under §2's current headline result.
+>   * *Later on 2026-09-17:* the axis-attribution test did establish it. The yaw
+>     component alone reproduces most of the reversal (§8 item 4). The
+>     saturation path remains unconfirmed.
 > * **The flight table above** (±60° commanded, ±34° achieved, 20.4° sideslip,
 >   ±78° / ±28°) was measured on the previous plant: 90° course, t=36.81° at
 >   8.367 m/s. That flight has been re-flown, and Figure 3 now uses t=45.00° at
@@ -1889,6 +1898,7 @@ uniform slalom unless a course set is named.
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | `--max-speed-sweep --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`. *(Corrected 2026-09-16: this row read "as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`". The §2 rows differ in `--sweep-turns` and speed range, so that fixed neither `--sweep-turns` nor the bracket. The 2026-08-17 run's exact flags were not recorded. Its 21 cells, 7 half-angles by 3 turns, are reproduced by the counterfactual's `current` variant.)* **Regenerated 2026-09-16** with the command above at commit `4229360`: gyroscopic term, quadratic rotor drag, controller motor floor equal to the plant's `w_min`. It matches the `physical_quadyaw` counterfactual on 21/21 cells. The pre-fix values are kept in §2 and reproduced by the counterfactual's `current` variant. |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
+| §8 item 4 cause of the reversal: axis attribution and yaw path (pre-registered 2026-09-17) | `docs/data/gyroscopic_axis_attribution.md` and `docs/data/gyroscopic_yaw_path.md`, each summarising the JSONs in the directory of the same name | `uv run --no-sync python docs/tools/gyroscopic_axis_attribution.py z docs/data/gyroscopic_axis_attribution/z.json`, likewise for `none`, `x`, `y` and `all`. Then `uv run --no-sync python docs/tools/gyroscopic_yaw_path.py limits Zp docs/data/gyroscopic_yaw_path/Zp.json`, likewise for `Zc`, and `paths docs/data/gyroscopic_yaw_path/paths.json`, which reads the `none` and `z` limits. Each tool's `summarise` mode writes its .md. Both run on the corrected plant and patch it at runtime; verified to reproduce on 2026-09-17. |
 | §8 item 4 mechanism on the fixed plant: pre-registered tests of 2026-09-16 and 2026-09-17, plus an exploratory re-analysis | `docs/data/gyroscopic_mechanism_fixed_plant.md` | `uv run --no-sync python docs/tools/gyroscopic_mechanism_fixed_plant.py`. It runs on the unpatched plant; its section 3 patches only the controller. |
 | §8 item 4 gyroscopic counterfactual and mechanism test | `docs/data/gyroscopic_counterfactual.md` with its nine variant JSONs; `docs/data/gyroscopic_mechanism.md` | `uv run --no-sync python docs/tools/gyroscopic_counterfactual.py physical docs/data/gyroscopic_counterfactual/physical.json`, likewise for `current`, `no_gyro`, `uncancelled`, `current_yawlast` and `physical_yawlast`; then `summarise docs/data/gyroscopic_counterfactual`; the test is `mechanism docs/data/gyroscopic_mechanism.md`. Operating point: the §3.8 strict-completion row. The tool patches the pre-fix plant, so it reproduces only at commit `8d3174b` and refuses to run on later plants. The variants `current_quadyaw`, `physical_quadyaw` and `physical_quadyaw_yawlast` were added 2026-09-16. |
 | §7.2d perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --matrix-gains`, drawn by `docs/tools/perturbation_figure.py`. Regenerated 2026-09-11 with the fixed plant and decoder and full-tensor gains. Of the flags above, `--speed-cap 25`, `--speed-tol 0.0625` and `--matrix-gains` are now the defaults; `--feedforward` (off by default) and `--max-accel 40` (default 5.0) are not. *(Corrected 2026-09-16: this said "the last three flags are now the defaults", which named the wrong three.)* the pre-fix run it replaced (2026-08-17) is quoted in the §7.2d note. Regenerated again 2026-09-16 with the same command at commit `4229360` (full rigid-body plant). |
@@ -2065,6 +2075,72 @@ Two conventions worth knowing when reading the CSVs:
    >   component of $\Omega\times I\Omega$ vanishes there, not roll and pitch.
    >
    > So the mechanism above does not explain the current results; it is open.
+
+   **Cause of the reversal, established 2026-09-17** (hypothesis-divergence
+   session). Tools: `docs/tools/gyroscopic_axis_attribution.py` and
+   `docs/tools/gyroscopic_yaw_path.py`. Results: `docs/data/gyroscopic_axis_attribution.md`
+   and `docs/data/gyroscopic_yaw_path.md`. Every criterion was pre-registered in
+   the tools' docstrings and in session notes before any data.
+
+   * *Why the question arose.* The user's intuition: $I_{zz}$ is the same for
+     every frame, and a narrow frame has the smaller $I_{xx}$ and so the higher
+     roll authority. So narrow frames should win a slalom, as the reduced model
+     said, yet the corrected model has wide frames win at 90° and 120°.
+   * *Frame facts, computed.*
+     * $I_{zz}$ = 0.00351 kg·m² for all seven bodies, within 2% of
+       $I_{xx}+I_{yy}$ (asserted in `Reports/make_figures.py`).
+     * So the gyroscopic roll and pitch accelerations are nearly
+       geometry-independent: $\dot p=\frac{I_{yy}-I_{zz}}{I_{xx}}qr$ with
+       coefficient -0.92 to -0.99, and $\dot q=\frac{I_{zz}-I_{xx}}{I_{yy}}pr$
+       with +0.92 to +0.99.
+     * Only yaw varies: $\dot r=\frac{I_{xx}-I_{yy}}{I_{zz}}pq$, from -0.76 at
+       t=20.44 through 0 to +0.75 at t=69.56.
+     * Torque capacity at hover: roll 0.551-1.478 N·m, pitch mirrored, yaw
+       0.0891 N·m on every body.
+   * *Reframing step.* Between no coupling and full coupling, at 120° the narrow
+     frame goes 6.805 → 5.281 m/s while the wide frame goes 6.609 → 7.117. One
+     end loses and the other gains: a response odd in $I_{xx}-I_{yy}$, which only
+     the yaw term is. A roll-versus-pitch authority burden would instead penalise
+     both ends. So the question became which axis carries the effect.
+   * *Test 1, axis attribution.* The gyroscopic term is kept, in plant and
+     controller, on one body axis at a time.
+     * Yaw alone reproduces 74% / 79% of the narrow frame's loss at 90° / 120°
+       and 85% of the wide frame's 120° gain.
+     * Pitch gives 27% / 8% of the loss; roll gives none of it.
+     * Verdicts: H-yaw SUPPORTED; H-pitch and H-interaction REFUTED.
+     * `all` reproduces the corrected Table 1 on 6/6 cells. Without any coupling
+       the narrow frame is the fastest of the three at 90° (8.406 against 8.367
+       and 8.133).
+   * *Test 2a, plant or controller* (yaw axis only).
+     * The yaw term in the plant with no cancellation reproduces 115% / 106% of
+       the narrow loss: A-plant SUPPORTED. With cancellation (6.297 / 5.594 m/s)
+       the narrow frame is barely faster than without it (5.984 / 5.516).
+     * Cancellation alone, with no plant term, has the mirror effect. Narrow
+       8.562 against 8.406 and 7.195 against 6.805; wide 7.938 against 8.133 and
+       6.414 against 6.609.
+     * **Untested interpretation:** the reduced model's controller injected the
+       term its plant lacked, which is this controller-only case on all axes, and
+       that plausibly produced its narrow-best ranking.
+   * *Test 2b, path.* Flights at 95% of the lower of the two limits, with the yaw
+     coupling (Z) and without it (N); ratios are Z/N.
+     * The narrow frame's heading error at the gates changes by 0.96 / 0.79 and
+       its crab angle by 0.81 / 0.72. B-heading REFUTED, B-crab REFUTED.
+     * X-quad control ratios 1.00 / 0.98 and 1.00 / 1.01, so the instrument is
+       valid.
+     * Descriptive, not tested: the narrow frame's 3-D sideslip at the gates rose
+       1.0 → 5.4° and 1.6 → 5.0°.
+   * *Established.* The yaw gyroscopic coupling acting on the vehicle causes the
+     reversal; it is odd in $I_{xx}-I_{yy}$; the controller's cancellation cannot
+     undo it.
+   * *Not established.* How that yaw torque becomes missed gates. It is not the
+     yaw-saturation share at equal push, and not heading lag or crab at the gates
+     below the limit.
+   * *Next test.* Fly the narrow frame just above and just below its limit, and
+     find the first quantity (3-D sideslip, altitude, cross-track, motor clipping)
+     to diverge before the first missed gate.
+   * *Caught on the way.* The first scratch run of the path tool read its
+     condition from the sweep's replaced argument list and failed before any
+     data. It was fixed and re-run; the tool now captures its own arguments first.
 
    *A second defect surfaced, not yet its own item.* The mixer clips each motor
    independently, so a yaw demand beyond capacity inflates thrust: 17.4 N
