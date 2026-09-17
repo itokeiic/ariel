@@ -601,8 +601,15 @@ def gyroscopic_mechanism_vals() -> dict[str, str]:
     ax = ax_tool["score"](runs)
     assert (ax["H-yaw"], ax["H-pitch"], ax["H-interaction"]) == ("SUPPORTED", "REFUTED", "REFUTED"), ax
     assert max(l["fraction"] for l in ax["axes"]["x"]["loss"]) <= 0.05, "roll reproduces none of the loss"
-    none90 = {h: runs["none"][f"90@{h:.2f}"]["max_speed"] for h in (20.44, 45.00, 69.56)}
-    assert none90[20.44] == max(none90.values()), "narrow frame fastest at 90 deg without coupling"
+    # SUPERSEDED 2026-09-17: this asserted "narrow frame fastest at 90 deg without
+    # coupling" by a strict max, but 8.406 vs 8.367 is inside SPEED_TOL -- a tie --
+    # and at 120 deg the X quad is ahead. What the report now states is asserted.
+    none = {(turn, h): runs["none"][f"{turn}@{h:.2f}"]["max_speed"]
+            for turn in (90, 120) for h in (20.44, 45.00, 69.56)}
+    assert abs(none[(90, 20.44)] - none[(90, 45.00)]) < SPEED_TOL, "narrow and X quad tie at 90 deg"
+    assert none[(120, 45.00)] - none[(120, 20.44)] >= SPEED_TOL, "X quad ahead of narrow at 120 deg"
+    x_gain = next(g for g in ax["axes"]["x"]["gain"] if g["turn"] == 120.0)["fraction"]
+    assert 0.3 < x_gain < 0.6, "roll alone reproduces part of the wide frame's gain"
 
     yaw_tool = _tool_functions("gyroscopic_yaw_path")
     yp = yaw_tool["score"](DATA / "gyroscopic_yaw_path")
@@ -612,6 +619,12 @@ def gyroscopic_mechanism_vals() -> dict[str, str]:
         assert lim["Zc"][f"{turn}@20.44"]["max_speed"] > lim["N"][f"{turn}@20.44"]["max_speed"]
         assert lim["Zc"][f"{turn}@69.56"]["max_speed"] < lim["N"][f"{turn}@69.56"]["max_speed"]
     assert yp["B-heading"]["verdict"] == "REFUTED" and yp["B-crab"]["verdict"] == "REFUTED"
+    # Exploratory (logged, not pre-registered): 3-D sideslip at the gates, N vs Z.
+    beta = {(k, c): yp["paths"][k][c]["beta_gates_deg"]
+            for k in ("90@20.44", "120@20.44", "90@69.56", "120@69.56") for c in ("N", "Z")}
+    for turn in ("90", "120"):   # the narrow frame's grows more than the wide frame's
+        assert (beta[(f"{turn}@20.44", "Z")] / beta[(f"{turn}@20.44", "N")]
+                > 2 * beta[(f"{turn}@69.56", "Z")] / beta[(f"{turn}@69.56", "N")])
 
     z, y = ax["axes"]["z"], ax["axes"]["y"]
     pct = lambda f: f"{100 * f:.0f}"  # noqa: E731
@@ -628,6 +641,13 @@ def gyroscopic_mechanism_vals() -> dict[str, str]:
         "GyHeadingNarrowOneTwenty": f"{yp['B-heading']['ratios']['120@20.44']:.2f}",
         "GyCrabNarrowNinety": f"{yp['B-crab']['ratios']['90@20.44']:.2f}",
         "GyCrabNarrowOneTwenty": f"{yp['B-crab']['ratios']['120@20.44']:.2f}",
+        "GyNoneNarrowNinety": f"{none[(90, 20.44)]:.3f}", "GyNoneXNinety": f"{none[(90, 45.00)]:.3f}",
+        "GyNoneNarrowOneTwenty": f"{none[(120, 20.44)]:.3f}",
+        "GyNoneXOneTwenty": f"{none[(120, 45.00)]:.3f}",
+        "GyAxisXGainOneTwenty": pct(x_gain),
+        **{f"GyBeta{'Narrow' if k.endswith('20.44') else 'Wide'}"
+           f"{'Ninety' if k.startswith('90') else 'OneTwenty'}{c}": f"{v:.1f}"
+           for (k, c), v in beta.items()},
     }
 
 

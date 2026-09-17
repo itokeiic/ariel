@@ -13,7 +13,7 @@
 
 \title{Arm azimuth and corner sharpness in quadrotor gate racing}
 \author{ARIEL / SPEAR}
-\date{2026-08-17}
+\date{2026-09-17} % was 2026-08-17; corrected-model subsection added since
 
 \input{numbers}
 
@@ -211,7 +211,8 @@ for gate spacing, lateral amplitude, corner radius, and the lateral acceleration
 % advantage.
 Each airframe is scored by the maximum speed at which it still completes the course without missing a gate. The speeds are located by bisection. A gate counts as passed only if the drone's offset from the gate centre, measured \emph{in the gate plane at the crossing} and including its vertical component, is within the gate radius of \SI{0.5}{\metre}. That offset is a Euclidean norm, so the gate is a circular opening rather than the square frame the word ``gate'' usually denotes; a square of the same half-width encloses \SI{27}{\percent} more area, all of it near the diagonals, so the criterion used here is the stricter of the two. Bisection is valid because completion is monotone in speed; the assumption is checked on every run and held in all cases reported here.
 
-Two conditions matter for the numbers below. Feedforward of the reference velocity and acceleration is enabled (c.f. section \ref{sec:feedforward}), and the controller cascade (outer position loop and inner attitude loop) is tuned so the position loop sits well below the attitude loop ($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$, $\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the inherited tuning, the loops were separated by only a factor of \num{3.2}, motor saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the active constraint. In that regime, the same airframe wins on every course, and the spread across the family is \SI{3}{\percent}. At the tuned operating point, every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so the airframe binds the performance instead.
+Two conditions matter for the numbers below. Feedforward of the reference velocity and acceleration is enabled (c.f. section \ref{sec:feedforward}), and the controller cascade (outer position loop and inner attitude loop) is tuned so the position loop sits well below the attitude loop ($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$, $\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the inherited tuning, the loops were separated by only a factor of \num{3.2}, motor saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the active constraint. In that regime, the same airframe wins on every course, and the spread across the family is \SI{3}{\percent}. % DRAFT 2026-09-17: model named in the next sentence; not re-measured on the corrected model.
+At the tuned operating point in the reduced model of Section~\ref{sec:results}, every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so the airframe binds the performance instead.
 
 \paragraph{Why one tuning is fair across airframes.} The gains are not shared between bodies; the \emph{closed-loop response} for set point hover is. Attitude gains are rederived per morphology as $K_R=\omega_n^2 I$ and $K_\Omega=2\zeta\omega_n I$, so $I$ cancels and every airframe is commanded to the same $(\omega_n,\zeta)=(\SI{24}{\radian\per\second},1)$ regardless of its inertia. The gain \emph{magnitudes} therefore differ between bodies, and between body axes, in proportion to the corresponding moments. This cancellation is exact only when the body axes are principal axes; for this family the products of inertia are identically zero (measured $\max|I_{ij}|=0$ for $i\neq j$, not merely small), because it retains both mirror planes. What is compared is thus geometry at matched commanded bandwidth, not geometry plus an accidental tuning advantage.
 
@@ -425,7 +426,9 @@ still move the ranking.
 % docs/data/gyroscopic_mechanism.md and gyroscopic_mechanism_fixed_plant.md
 % (mechanism); account in docs/drone_morphology_gate_racing.md, section 8
 % items 4 and 17.
-Three simplifications of the reduced model were found after the results above
+% DRAFT 2026-09-17: was "Three simplifications of the reduced model"; the motor
+% floor is a controller setting, not a simplification in the plant.
+Three differences from a faithful model were found after the results above
 were obtained, and the measurements were repeated without them.
 Table~\ref{tab:models} lists what differs. Everything else is identical: the
 controller and its gains, the motor mixer, the courses, the scoring and the
@@ -477,7 +480,7 @@ The corrected model reverses the trend at the sharper corners
 (Table~\ref{tab:corrected}). At $60^\circ$ the middle of the family is still best,
 at $\CorrArgmaxSixty^\circ$. At $90^\circ$ the best bodies are
 $\CorrArgmaxNinety^\circ$, and at $120^\circ$ they are
-$\CorrArgmaxOneTwenty^\circ$; the narrowest frame, first at $120^\circ$ in
+$\CorrArgmaxOneTwenty^\circ$; the narrowest frame, tied first at $120^\circ$ in
 Table~\ref{tab:results}, is now last at both, by
 \SI{\CorrNarrowNinety}{\percent} and \SI{\CorrNarrowOneTwenty}{\percent}. The
 spread across the family is \SI{\CorrSpreadSixty}{\percent},
@@ -514,9 +517,16 @@ coupling depends on geometry,
 \]
 with a coefficient that runs from $\EulerYawNarrow$ on the narrowest frame, through
 zero on the X quad, to $+\EulerYawWide$ on the widest. It changes sign across the
-family, and it acts on the axis the rotors control most weakly. Roll authority on
-its own does favour the narrow frames: without any gyroscopic coupling, the
-narrowest frame is the fastest of the three tested at $90^\circ$.
+family, and it acts on the axis the rotors control most weakly.
+% DRAFT 2026-09-17. SUPERSEDED the same day: "Roll authority on its own does favour
+% the narrow frames: without any gyroscopic coupling, the narrowest frame is the
+% fastest of the three tested at 90 deg." The gap to the X quad is inside the
+% bisection tolerance, a tie, and at 120 deg the X quad is ahead.
+Roll authority alone does not make the narrow frames faster on these courses:
+without any gyroscopic coupling, the narrowest frame ties the X quad at $90^\circ$
+(\SI{\GyNoneNarrowNinety}{\metre\per\second} against \SI{\GyNoneXNinety}{\metre\per\second})
+and trails it at $120^\circ$ (\SI{\GyNoneNarrowOneTwenty}{\metre\per\second} against
+\SI{\GyNoneXOneTwenty}{\metre\per\second}).
 
 Two pre-registered tests on the corrected model trace the reversal to this yaw
 coupling. The first kept the gyroscopic term, in both plant and controller, on
@@ -525,7 +535,9 @@ one body axis at a time. The yaw axis alone reproduces
 narrow frame's loss at $90^\circ$ and $120^\circ$, and
 \SI{\GyAxisZGainOneTwenty}{\percent} of the wide frame's gain at $120^\circ$.
 Pitch reproduces at most \SI{\GyAxisYLossMax}{\percent} of the loss, and roll none
-of it. The second separated plant from controller on the yaw axis. The yaw torque
+of it, % DRAFT 2026-09-17: the roll share of the gain was omitted
+though roll alone reproduces \SI{\GyAxisXGainOneTwenty}{\percent} of the wide
+frame's gain at $120^\circ$. The second separated plant from controller on the yaw axis. The yaw torque
 acting in the plant reproduces all of the narrow frame's loss
 (\SI{\GyPlantLossNinety}{\percent} and \SI{\GyPlantLossOneTwenty}{\percent}), even
 when the controller does not cancel it. The controller's cancellation acting
@@ -537,11 +549,25 @@ plant lacked.
 How the yaw torque turns into missed gates is not established. Yaw saturation,
 supported on the reduced model, was not confirmed on the corrected one: flown at
 the same fraction of its own limit, the narrowest frame does not saturate yaw
-most. Nor does the coupling act through heading lag or crab at the gates. Flown at
-the same speed with and without it, just below its limit, the narrow frame's heading
-error at the gates changes by a factor of \GyHeadingNarrowNinety{} at $90^\circ$
-and \GyHeadingNarrowOneTwenty{} at $120^\circ$, and its crab angle by
+most.
+% DRAFT 2026-09-17. SUPERSEDED the same day: "Nor does the coupling act through
+% heading lag or crab at the gates." The flights pass every gate, so they rule out
+% growth below the limit, not a path above it; and the 3-D sideslip logged with
+% them, unreported, is the one quantity that does grow.
+Nor did heading lag or crab grow at the gates. Flown at the same speed with and
+without the coupling, just below the narrow frame's limit, its heading error at
+the gates changes by a factor of \GyHeadingNarrowNinety{} at $90^\circ$ and
+\GyHeadingNarrowOneTwenty{} at $120^\circ$, and its crab angle by
 \GyCrabNarrowNinety{} and \GyCrabNarrowOneTwenty{}, where growth was predicted.
+These flights pass every gate, so they show the flight before it fails, not the
+failure. One quantity logged in them without a prediction does grow: the narrow
+frame's three-dimensional sideslip at the gates, from
+\SIrange{\GyBetaNarrowNinetyN}{\GyBetaNarrowNinetyZ}{\degree} at $90^\circ$ and
+from \SIrange{\GyBetaNarrowOneTwentyN}{\GyBetaNarrowOneTwentyZ}{\degree} at
+$120^\circ$, against
+\SIrange{\GyBetaWideNinetyN}{\GyBetaWideNinetyZ}{\degree} and
+\SIrange{\GyBetaWideOneTwentyN}{\GyBetaWideOneTwentyZ}{\degree} on the widest
+frame. That is a lead for the next test, not a result.
 
 \begin{figure}[htb]
   \centering
@@ -560,8 +586,14 @@ also distorts thrust, roll and pitch; a mixer that gives up yaw first was tried
 only as the check above. The quadratic drag form was chosen so the plant matches
 the controller's allocation, whereas the identified motor model this plant was
 ported from is linear in motor speed. The controller tuning was not revisited
-for the corrected model, and the heading figures quoted above (yaw amplitude,
-sideslip, roll and pitch excursions) were measured on the reduced model only.
+for the corrected model.
+% DRAFT 2026-09-17. SUPERSEDED the same day: "and the heading figures quoted above
+% (yaw amplitude, sideslip, roll and pitch excursions) were measured on the reduced
+% model only" -- contradicted by the corrected-model heading, crab and sideslip
+% figures quoted just above.
+The heading figures of Section~\ref{sec:results} (yaw amplitude, sideslip, roll
+and pitch excursions) were not re-measured on it; only the comparison with and
+without the yaw coupling above was flown on the corrected model.
 
 \section{Implication}
 
@@ -582,7 +614,7 @@ airframe, was the limit.
 
 \section*{Provenance}
 
-Figures, the results table and every number quoted inline
+Figures, both results tables and every number quoted inline
 (\texttt{numbers.tex}) are generated from the repository by
 \texttt{Reports/make\_figures.py}: geometry from the decoder and plant interface,
 speeds from the CSVs in \texttt{docs/data/}. The inline numbers are generated

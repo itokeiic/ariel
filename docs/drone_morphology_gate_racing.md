@@ -518,6 +518,10 @@ pitch **and yaw** match the scalar form exactly for a coplanar body -- verified
 at 0.0 deviation. The quadratic yaw form remains open. The characterisation test
 called for above exists: `tests/unit/test_simulation/test_plant_thrust_direction.py`.)*
 
+*(Superseded 2026-09-16: the quadratic yaw form is no longer open. Both plants now
+apply $k_m W^2$ about each rotor axis (commit `4229360`, §8 item 17), and the
+parity test compares against the scalar form plus the terms added that day.)*
+
 **Scope.** airevolve's own morphology results are unaffected -- its plant flies
 canted rotors correctly. The exposure is ARIEL-only.
 
@@ -573,7 +577,13 @@ every morphology is limited by the same constant.
 
 ---
 
-### 3.8 The gate-pass test ignores altitude (found 2026-08-17, NOT yet fixed)
+### 3.8 The gate-pass test ignores altitude (found 2026-08-17; guarded, not fixed)
+
+*(Status 2026-09-17; the heading read "NOT yet fixed". The criterion was decided
+on 2026-09-11 (§8 item 8): a gate is a circular opening in the gate plane. The
+sweep's `--completion` defaults to `strict`, which applies it. `GateChecker` in
+`examples/d_drones/_ctrl_helpers.py` still tests `pos[:2]` and is reached only
+through `--completion sequential`.)*
 
 `GateChecker.check_gate_passing` records a pass when the drone crosses the gate
 plane within half a gate opening **laterally** -- and it measures that laterally
@@ -2106,11 +2116,17 @@ Two conventions worth knowing when reading the CSVs:
      controller, on one body axis at a time.
      * Yaw alone reproduces 74% / 79% of the narrow frame's loss at 90° / 120°
        and 85% of the wide frame's 120° gain.
-     * Pitch gives 27% / 8% of the loss; roll gives none of it.
+     * Pitch gives 27% / 8% of the loss; roll gives none of it. Roll alone does
+       give 46% of the wide frame's 120° gain (6.609 → 6.844), pitch −15%.
      * Verdicts: H-yaw SUPPORTED; H-pitch and H-interaction REFUTED.
-     * `all` reproduces the corrected Table 1 on 6/6 cells. Without any coupling
-       the narrow frame is the fastest of the three at 90° (8.406 against 8.367
-       and 8.133).
+     * `all` reproduces the corrected Table 1 on 6/6 cells. Without any coupling,
+       the narrow frame and the X quad tie at 90° (8.406 and 8.367 m/s, inside the
+       0.0625 m/s bisection tolerance; wide 8.133), and the X quad leads at 120°
+       (6.922 against 6.805; wide 6.609). So roll authority alone does not favour
+       the narrow frame on these courses.
+       *(Corrected 2026-09-17. This bullet read: "Without any coupling the narrow
+       frame is the fastest of the three at 90° (8.406 against 8.367 and 8.133)",
+       which ignored the tie tolerance and omitted 120°.)*
    * *Test 2a, plant or controller* (yaw axis only).
      * The yaw term in the plant with no cancellation reproduces 115% / 106% of
        the narrow loss: A-plant SUPPORTED. With cancellation (6.297 / 5.594 m/s)
@@ -2128,7 +2144,9 @@ Two conventions worth knowing when reading the CSVs:
      * X-quad control ratios 1.00 / 0.98 and 1.00 / 1.01, so the instrument is
        valid.
      * Descriptive, not tested: the narrow frame's 3-D sideslip at the gates rose
-       1.0 → 5.4° and 1.6 → 5.0°.
+       1.0 → 5.4° and 1.6 → 5.0°; the wide frame's 3.3 → 3.7° and 3.3 → 4.6°.
+     * These flights pass all 15 gates, so they show the flight below the limit,
+       not how it fails.
    * *Established.* The yaw gyroscopic coupling acting on the vehicle causes the
      reversal; it is odd in $I_{xx}-I_{yy}$; the controller's cancellation cannot
      undo it.
@@ -2144,7 +2162,7 @@ Two conventions worth knowing when reading the CSVs:
 
    *A second defect surfaced, not yet its own item.* The mixer clips each motor
    independently, so a yaw demand beyond capacity inflates thrust: 17.4 N
-   delivered against 8.1 N commanded at hover.
+   delivered against 8.1 N commanded at hover. *(2026-09-17: now item 19.)*
 
    *Decision (2026-09-16).* Fix the plant rather than remove the cancellation.
    Pending, in order:
@@ -2349,7 +2367,8 @@ Two conventions worth knowing when reading the CSVs:
    (added 2026-09-11). The same trap as the `--speed-tol` default fixed that
    day: a command copied without the flag behaves differently. It only bites a
    body that completes at the top of the bracket.
-17. **Yaw drag torque is still the hover linearisation** (added 2026-09-11).
+17. **FIXED 2026-09-16 -- yaw drag torque was the hover linearisation** (added
+   2026-09-11 as "Yaw drag torque is still the hover linearisation").
    Kept deliberately so the plant fix held exact parity; the quadratic form is
    open, and changing it moves every controller tuning calibrated against the
    linearised response.
@@ -2378,3 +2397,11 @@ Two conventions worth knowing when reading the CSVs:
    dynamics never matched `DroneSimulator`, coplanar or not, despite being
    documented as a drop-in replacement. Fixed and pinned by a cross-plant test;
    anything trained through it earlier was trained against a different plant.
+19. **The mixer inflates thrust under yaw saturation** (added 2026-09-17; found
+   under item 4). `mixerFM` clips each motor's squared speed independently, so a
+   yaw demand beyond what the rotors can supply is not traded against thrust:
+   17.4 N delivered against 8.1 N commanded at hover. Roll and pitch are distorted
+   the same way. The original mixer was kept on purpose, and every result in the
+   report flies it. A yaw-last mixer was tried only as a sensitivity check, and
+   with it the wide end still wins (`docs/data/gyroscopic_counterfactual.md`).
+   Open.
