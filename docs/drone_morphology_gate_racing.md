@@ -250,6 +250,20 @@ component of $\Omega\times I\Omega$: it opposes the demanded yaw and exceeds the
 rotors' yaw capacity. That test ran on the pre-fix plant and has not been
 repeated on this one.
 
+> **Repeated on this plant, 2026-09-17: not confirmed**
+> (`docs/data/gyroscopic_mechanism_fixed_plant.md`).
+> * The pre-registered 2026-09-16 test gave (A) correlation INCONCLUSIVE (narrow
+>   frames -0.12 to -0.20, short of -0.3) and (B) saturation REFUTED.
+> * A pre-registered confirmatory test flew every body at 95% of its own limit,
+>   removing the confound that the narrow frames had been pushed hardest.
+>   (P1) REFUTED: the narrowest frame does not saturate yaw most. At 90° it is
+>   13.9% against 22.6% at t=45.00, with the peak of 27.5% at t=36.81; at 120°
+>   it is 18.7% against a peak of 41.5% at t=28.63. (P2), removing the
+>   controller's cancellation, was INCONCLUSIVE.
+> * So yaw saturation from the gyroscopic term does not explain the narrow
+>   frames' loss on the plant that produced this table. The mechanism behind the
+>   regenerated ranking is currently unexplained. The paragraph above is kept.
+
 #### SUPERSEDED 2026-09-16: the headline result on the plant without the gyroscopic term (strict criterion, 2026-08-17)
 
 > **SUPERSEDED 2026-09-16.** The table and the reading below, through "Two
@@ -1681,6 +1695,10 @@ family: it is set by the weakest channel, and the weakest channel is yaw.)
 >     capacity.
 >   * So yaw is the channel through which geometry shapes the regenerated
 >     ranking (§2), not a common-mode lag.
+>   * *Corrected 2026-09-17:* the bullet above overstates it. The gyroscopic
+>     yaw torque does differ across the family, so yaw is not common-mode. But
+>     the fixed-plant tests did not establish that it shapes the ranking; see
+>     the note under §2's current headline result.
 > * **The flight table above** (±60° commanded, ±34° achieved, 20.4° sideslip,
 >   ±78° / ±28°) was measured on the previous plant: 90° course, t=36.81° at
 >   8.367 m/s. That flight has been re-flown, and Figure 3 now uses t=45.00° at
@@ -1866,6 +1884,7 @@ uniform slalom unless a course set is named.
 | §7.2c principal axes and matrix gains | `docs/data/principal_axes.csv` | `uv run --no-sync python docs/tools/principal_axes_table.py` (no rollouts; closed-form from the inertia tensor) |
 | §3.8 strict completion re-run | `docs/data/tuned_strict_completion.csv` | `--max-speed-sweep --sweep-turns 60,90,120 --points 7 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`. *(Corrected 2026-09-16: this row read "as the §2 rows plus `--completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25`". The §2 rows differ in `--sweep-turns` and speed range, so that fixed neither `--sweep-turns` nor the bracket. The 2026-08-17 run's exact flags were not recorded. Its 21 cells, 7 half-angles by 3 turns, are reproduced by the counterfactual's `current` variant.)* **Regenerated 2026-09-16** with the command above at commit `4229360`: gyroscopic term, quadratic rotor drag, controller motor floor equal to the plant's `w_min`. It matches the `physical_quadyaw` counterfactual on 21/21 cells. The pre-fix values are kept in §2 and reproduced by the counterfactual's `current` variant. |
 | §3.8 proximity re-run (superseded by strict) | `docs/data/tuned_3d_completion.csv` | as the §2 rows plus `--completion flown3d --speed-lo 3 --speed-hi 12 --speed-cap 25` |
+| §8 item 4 mechanism on the fixed plant: pre-registered tests of 2026-09-16 and 2026-09-17, plus an exploratory re-analysis | `docs/data/gyroscopic_mechanism_fixed_plant.md` | `uv run --no-sync python docs/tools/gyroscopic_mechanism_fixed_plant.py`. It runs on the unpatched plant; its section 3 patches only the controller. |
 | §8 item 4 gyroscopic counterfactual and mechanism test | `docs/data/gyroscopic_counterfactual.md` with its nine variant JSONs; `docs/data/gyroscopic_mechanism.md` | `uv run --no-sync python docs/tools/gyroscopic_counterfactual.py physical docs/data/gyroscopic_counterfactual/physical.json`, likewise for `current`, `no_gyro`, `uncancelled`, `current_yawlast` and `physical_yawlast`; then `summarise docs/data/gyroscopic_counterfactual`; the test is `mechanism docs/data/gyroscopic_mechanism.md`. Operating point: the §3.8 strict-completion row. The tool patches the pre-fix plant, so it reproduces only at commit `8d3174b` and refuses to run on later plants. The variants `current_quadyaw`, `physical_quadyaw` and `physical_quadyaw_yawlast` were added 2026-09-16. |
 | §7.2d perturbation flight results | `docs/data/perturbation.csv`, `docs/data/perturbation_table.md`, `docs/data/perturbation_morphologies.png` | `--perturbation-sweep --sweep-turns 60,90,120 --completion strict --speed-lo 2 --speed-hi 12 --speed-cap 25 --speed-tol 0.0625 --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --matrix-gains`, drawn by `docs/tools/perturbation_figure.py`. Regenerated 2026-09-11 with the fixed plant and decoder and full-tensor gains. Of the flags above, `--speed-cap 25`, `--speed-tol 0.0625` and `--matrix-gains` are now the defaults; `--feedforward` (off by default) and `--max-accel 40` (default 5.0) are not. *(Corrected 2026-09-16: this said "the last three flags are now the defaults", which named the wrong three.)* the pre-fix run it replaced (2026-08-17) is quoted in the §7.2d note. Regenerated again 2026-09-16 with the same command at commit `4229360` (full rigid-body plant). |
 | Report Figure 3, reference vs flown | `docs/data/flight_logs/slalom_{60,90,120}deg.npz` | `--video --turn-deg {60,90,120} --video-half-angle {36.813816210732824,45.0,53.18618378926718} --video-speed {10.3984375,8.25,7.078125} --completion strict --att-omega-n 24 --pos-omega-n 2.0 --pos-zeta 1.0 --feedforward --max-accel 40 --log-npz <path>`, drawn by `Reports/make_figures.py`. **Re-flown 2026-09-16** on the full rigid-body plant (commit `4229360` plus the `--log-npz` fix below, committed with these logs). Each is the first body among its Table 1 ties at its own limit, and each passes 15/15 strict. Previously `--video-half-angle {36.81382,36.81382,20.44145} --video-speed {10.164,8.367,6.648}`. `--log-npz` had stopped saving the `half_angle_deg` and `speed` that `Reports/make_figures.py` reads, so the old command could not reproduce the committed logs; it saves them again as of 2026-09-16. |
@@ -2023,6 +2042,23 @@ Two conventions worth knowing when reading the CSVs:
    * The sign flip at t=45° follows from the sign of $I_{xx}-I_{yy}$ alone. The
      substantive finding is that $pq$ correlates with the yaw demand at all.
    * At 60° the correlations only just clear the pre-registered ±0.3 threshold.
+
+   > **Not confirmed on the fixed plant (2026-09-17).** The test above ran on
+   > the plant without the term. On the plant that produced the regenerated
+   > Table 1, `docs/tools/gyroscopic_mechanism_fixed_plant.py` gives:
+   > * **the 2026-09-16 pre-registered test:** (A) INCONCLUSIVE, (B) REFUTED;
+   > * **an exploratory re-analysis** of those flights, using the total yaw
+   >   command: the narrowest frames appeared to saturate most. That comparison
+   >   was confounded, because they flew at ~99% of their own limit and the
+   >   others at 67-79%;
+   > * **the 2026-09-17 confirmatory test**, every body at 95% of its own
+   >   limit: (P1) REFUTED; the narrowest frame does not saturate yaw most.
+   >   (P2) INCONCLUSIVE. Removing the cancellation lowered the narrowest
+   >   frame's saturation, but it also moved the X quad by 4.2 points at 90°.
+   >   The premise that the X quad is unaffected was wrong: only the yaw
+   >   component of $\Omega\times I\Omega$ vanishes there, not roll and pitch.
+   >
+   > So the mechanism above does not explain the current results; it is open.
 
    *A second defect surfaced, not yet its own item.* The mixer clips each motor
    independently, so a yaw demand beyond capacity inflates thrust: 17.4 N

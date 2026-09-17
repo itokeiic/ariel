@@ -247,6 +247,9 @@ which is the same conclusion read a second way.
 % The supported mechanism (pre-registered test, run on the pre-fix plant and not
 % yet repeated) is the yaw component of Omega x I Omega opposing the demanded yaw
 % on narrow frames beyond the rotors' yaw capacity; see the doc, section 8 item 4.
+% CORRECTED 2026-09-17: repeated on the fixed plant and NOT confirmed (equal-push
+% test refuted; docs/data/gyroscopic_mechanism_fixed_plant.md). The mechanism
+% behind the regenerated ranking is currently unexplained -- do not cite one.
 % "8.5 m/s on a 2.4 m leg" are literals from the old operating point.
 The mechanism is the one the authorities predict. Sharper corners demand faster
 bank reversals---at \SI{8.5}{\metre\per\second} on a \SI{2.4}{\metre} leg the
@@ -309,7 +312,9 @@ monotone ranking behind it. Full account in
 % been re-flown. (2) "the comparison
 % is unaffected ... the lag is common-mode" no longer holds: with the gyroscopic
 % term the yaw disturbance (Ixx-Iyy)pq differs across the family, and it is the
-% mechanism behind the regenerated ranking. Yaw authority per newton itself is
+% mechanism behind the regenerated ranking. [CORRECTED 2026-09-17: that it drives
+% the ranking was not confirmed on the fixed plant; only "not common-mode" holds.]
+% Yaw authority per newton itself is
 % unchanged (geometry only).
 \paragraph{Heading, and the limits of the roll argument.} Yaw is commanded to
 follow the trajectory tangent, which is both what the gate geometry describes
@@ -427,6 +432,8 @@ still move the ranking.
 % OBSOLETE 2026-09-16 (later the same day): the plant now integrates the term and
 % Table 1 is regenerated with it, so this caveat describes a limitation that no
 % longer applies. Replace with a statement of what changed, or delete.
+% 2026-09-17: its mechanism sentence ("opposes the yaw a slalom demands on narrow
+% frames ...") was also not confirmed on the fixed plant.
 % Source: docs/data/gyroscopic_counterfactual.md and docs/data/gyroscopic_mechanism.md.
 More seriously, the simulated plant omits the gyroscopic term
 $\Omega\times I\Omega$ of Euler's equations. The attitude controller cancels that
