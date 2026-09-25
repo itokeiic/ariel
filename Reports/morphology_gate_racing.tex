@@ -531,7 +531,8 @@ family, so the yaw channel was not strictly common-mode even then.
 % below is asserted by Reports/make_figures.py.
 \emph{Why} the wide frames win. Every frame in this family has the same
 $I_{zz}$, and because rotors and arms lie in one plane, $I_{zz}$ is almost exactly
-$I_{xx}+I_{yy}$. Euler's equations then make the gyroscopic accelerations about
+$I_{xx}+I_{yy}$. Euler's equations (Appendix~\ref{sec:euler}) then make the
+gyroscopic accelerations about
 roll and pitch nearly the same for every frame,
 $\dot\Omega_x \approx -\Omega_y\Omega_z$ and $\dot\Omega_y \approx \Omega_x\Omega_z$,
 with coefficients of magnitude \EulerRPMin{} to \EulerRPMax{}. Only the yaw
@@ -546,22 +547,29 @@ family, and it acts on the axis the rotors control most weakly.
 % the narrow frames: without any gyroscopic coupling, the narrowest frame is the
 % fastest of the three tested at 90 deg." The gap to the X quad is inside the
 % bisection tolerance, a tie, and at 120 deg the X quad is ahead.
-Roll authority alone does not make the narrow frames faster on these courses:
-without any gyroscopic coupling, the narrowest frame ties the X quad at $90^\circ$
-(\SI{\GyNoneNarrowNinety}{\metre\per\second} against \SI{\GyNoneXNinety}{\metre\per\second})
-and trails it at $120^\circ$ (\SI{\GyNoneNarrowOneTwenty}{\metre\per\second} against
-\SI{\GyNoneXOneTwenty}{\metre\per\second}).
-
 Two pre-registered tests on the corrected model trace the reversal to this yaw
 coupling. The first kept the gyroscopic term, in both plant and controller, on
-one body axis at a time. The yaw axis alone reproduces
+one body axis at a time, on the narrowest frame, the X quad and the widest
+(Table~\ref{tab:axes}). Keeping it on every axis is the corrected model, and
+reproduces Table~\ref{tab:corrected} cell for cell. The yaw axis alone reproduces
 \SI{\GyAxisZLossNinety}{\percent} and \SI{\GyAxisZLossOneTwenty}{\percent} of the
 narrow frame's loss at $90^\circ$ and $120^\circ$, and
 \SI{\GyAxisZGainOneTwenty}{\percent} of the wide frame's gain at $120^\circ$.
 Pitch reproduces at most \SI{\GyAxisYLossMax}{\percent} of the loss, and roll none
 of it, % DRAFT 2026-09-17: the roll share of the gain was omitted
 though roll alone reproduces \SI{\GyAxisXGainOneTwenty}{\percent} of the wide
-frame's gain at $120^\circ$. The second separated plant from controller on the yaw axis. The yaw torque
+frame's gain at $120^\circ$.
+% DRAFT 2026-09-17, moved here 2026-09-22 from the paragraph above, where the
+% numbers preceded the test that produced them (Table 4's "no axis" column).
+Removing the coupling from every axis also answers the intuition that the narrow
+frames, with their smaller $I_{xx}$, should suit a slalom: roll authority alone
+does not make them faster on these courses. Without any gyroscopic coupling the
+narrowest frame ties the X quad at $90^\circ$
+(\SI{\GyNoneNarrowNinety}{\metre\per\second} against \SI{\GyNoneXNinety}{\metre\per\second},
+inside the bisection tolerance) and trails it at $120^\circ$
+(\SI{\GyNoneNarrowOneTwenty}{\metre\per\second} against
+\SI{\GyNoneXOneTwenty}{\metre\per\second}).
+The second test separated plant from controller on the yaw axis. The yaw torque
 acting in the plant reproduces all of the narrow frame's loss
 (\SI{\GyPlantLossNinety}{\percent} and \SI{\GyPlantLossOneTwenty}{\percent}), even
 when the controller does not cancel it. The controller's cancellation acting
@@ -569,6 +577,20 @@ alone has the mirror effect: it raises the narrow frame's limit and lowers the
 wide frame's. That mirror effect is a plausible but untested account of the
 reduced model's opposite ranking, since its controller injected the term its
 plant lacked.
+
+\begin{table}[htb]
+  \centering
+  \caption{Maximum completing speed (\si{\metre\per\second}) with the gyroscopic
+  term kept only on the listed body axes, in the plant and in the controller's
+  cancellation alike. ``All axes'' is the corrected model of
+  Table~\ref{tab:corrected}; ``no axis'' omits the term consistently, as the
+  reduced model's plant did but its controller did not. Three of the seven
+  airframes---the narrowest, the X quad and the widest---on the two sharper
+  courses; the $60^\circ$ course, whose spread across the family is
+  \SI{\CorrSpreadSixty}{\percent}, was not flown.}
+  \label{tab:axes}
+  \input{axis_attribution_table.tex}
+\end{table}
 
 How the yaw torque turns into missed gates is not established. Yaw saturation,
 supported on the reduced model, was not confirmed on the corrected one: flown at
@@ -638,7 +660,7 @@ airframe, was the limit.
 
 \section*{Provenance}
 
-Figures, both results tables and every number quoted inline
+Figures, the generated tables and every number quoted inline
 (\texttt{numbers.tex}) are generated from the repository by
 \texttt{Reports/make\_figures.py}: geometry from the decoder and plant interface,
 speeds from the CSVs in \texttt{docs/data/}. The inline numbers are generated
@@ -710,4 +732,45 @@ is dropped:
 The middle term has become pure damping against motion: the controller is then
 tuned to hold position at $p_{\rm ref}$ rather than to follow it, and so chases
 the reference instead of tracking it.
+\section{Euler's equation of motion}\label{sec:euler}
+
+% DRAFT 2026-09-25: notation preamble, so this appendix is self-contained and its
+% symbols are not read against the Notation section of the body.
+This appendix keeps the standard flight-dynamics notation, which is not the
+notation of the body. Here $\boldsymbol{F}$ and $\boldsymbol{G}$ are the body
+force and moment, $(U,V,W)$ the body-axis velocity components and $(P,Q,R)$ the
+body-axis angular rates---the rates the body writes $\Omega_x$, $\Omega_y$,
+$\Omega_z$. \emph{In this appendix only, $W$ is a velocity}; everywhere else in
+the report $W$ is a motor speed in \si{\radian\per\second}. The moments of
+inertia $\boldsymbol{I}_{xx}$, $\boldsymbol{I}_{yy}$, $\boldsymbol{I}_{zz}$ are
+those of the body's Notation section, and $\boldsymbol{I}_{xy}$,
+$\boldsymbol{I}_{xz}$, $\boldsymbol{I}_{yz}$ are the products of inertia, which
+are identically zero for the airframes flown here.
+
+The terms quadratic in the rates are the gyroscopic coupling. Dropping them
+leaves $\boldsymbol{I}\dot{\boldsymbol{\Omega}}=\boldsymbol{G}$, which is the
+form the reduced model integrated (Table~\ref{tab:models}).
+
+\begin{equation}
+\begin{aligned}
+& \boldsymbol{F}=\boldsymbol{F}_x \boldsymbol{i}+\boldsymbol{F}_y \boldsymbol{j}+\boldsymbol{F}_z \boldsymbol{k} \\
+& \boldsymbol{G}=\boldsymbol{G}_x \boldsymbol{i}+\boldsymbol{G}_y \boldsymbol{j}+\boldsymbol{G}_z \boldsymbol{k} \\
+& \left\{\begin{array}{l}
+m\left(\frac{d U}{d t}+Q W-R V\right)=\boldsymbol{F}_x \\
+m\left(\frac{d V}{d t}+R U-P W\right)=\boldsymbol{F}_y \\
+m\left(\frac{d W}{d t}+P V-Q U\right)=\boldsymbol{F}_z
+\end{array}\right. \\
+& \left\{\begin{array}{l}
+\boldsymbol{I}_{x x} \frac{d P}{d t}-\boldsymbol{I}_{x y} \frac{d Q}{d t}-\boldsymbol{I}_{x z} \frac{d R}{d t}-\boldsymbol{I}_{x z} P Q+\left(\boldsymbol{I}_{z z}-\boldsymbol{I}_{y y}\right) Q R+\boldsymbol{I}_{y x} R P-\boldsymbol{I}_{z y} Q^2+\boldsymbol{I}_{y z} R^2 \\
+\quad=\boldsymbol{G}_x \\
+-\boldsymbol{I}_{y x} \frac{d P}{d t}+\boldsymbol{I}_{y y} \frac{d Q}{d t}-\boldsymbol{I}_{y z} \frac{d R}{d t}+\boldsymbol{I}_{z y} P Q-\boldsymbol{I}_{x y} Q R+\left(\boldsymbol{I}_{x x}-\boldsymbol{I}_{z z}\right) R P+\boldsymbol{I}_{z x} P^2-\boldsymbol{I}_{x z} R^2 \\
+% 2026-09-25: the coefficient of RP above was pasted as (I_xx - I_zx); derived
+% from G = dH/dt + Omega x H it is (I_xx - I_zz). F_y below the force rows was
+% pasted as F_{yy}.
+=\boldsymbol{G}_y \\
+-\boldsymbol{I}_{z x} \frac{d P}{d t}-\boldsymbol{I}_{z y} \frac{d Q}{d t}+\boldsymbol{I}_{z z} \frac{d R}{d t}+\left(\boldsymbol{I}_{y y}-\boldsymbol{I}_{x x}\right) P Q+\boldsymbol{I}_{x z} Q R-\boldsymbol{I}_{y z} R P-\boldsymbol{I}_{y x} P^2+\boldsymbol{I}_{x y} Q^2 \\
+=\boldsymbol{G}_z
+\end{array}\right.
+\end{aligned}
+\end{equation}
 \end{document}

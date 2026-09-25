@@ -447,6 +447,38 @@ def results_table(path: Path = TABLE_REDUCED) -> str:
     return "\n".join(head + lines + tail) + "\n"
 
 
+def axis_attribution_table() -> str:
+    """The axis-attribution counterfactual as a tabular (2026-09-17).
+
+    Same data as docs/data/gyroscopic_axis_attribution.md: the corrected model
+    with the gyroscopic term, in plant and controller alike, kept only on the
+    listed body axes. `all` is the corrected model, so it must reproduce
+    Table 3; that identity is asserted here, as the tool asserts it too.
+    """
+    tool = _tool_functions("gyroscopic_axis_attribution")
+    runs = {c: json.loads((DATA / "gyroscopic_axis_attribution" / f"{c}.json").read_text())
+            for c in tool["CONDITIONS"]}
+    table3 = load_speeds(TABLE_CORRECTED)
+    lines = []
+    for turn in tool["TURNS"]:
+        for h in tool["HALVES"]:
+            key = f"{turn:.0f}@{h:.2f}"
+            cells = [f"{runs[c][key]['max_speed']:.3f}" for c in tool["CONDITIONS"]]
+            nearest = min(table3[turn], key=lambda a: abs(a - h))
+            assert abs(float(table3[turn][nearest]["max_speed"])
+                       - runs["all"][key]["max_speed"]) < 1e-9, f"`all` != Table 3 at {key}"
+            lines.append(f"    ${turn:.0f}^\\circ$ & {h:.2f} & " + " & ".join(cells) + r" \\")
+        if turn != tool["TURNS"][-1]:
+            lines.append(r"    \addlinespace")
+    head = [r"\begin{tabular}{l r ccccc}", r"  \toprule",
+            r"  & & \multicolumn{5}{c}{gyroscopic term kept on} \\",
+            r"  \cmidrule(lr){3-7}",
+            r"  $\theta$ & $t$ (\si{\degree}) & no axis & $x$ (roll) & $y$ (pitch) &"
+            r" $z$ (yaw) & all axes \\",
+            r"  \midrule"]
+    return "\n".join(head + lines + [r"  \bottomrule", r"\end{tabular}"]) + "\n"
+
+
 def _speed_semantics_module():
     """Import docs/tools/speed_semantics.py, which is a script, not a package."""
     path = REPO / "docs" / "tools" / "speed_semantics.py"
@@ -750,9 +782,11 @@ if __name__ == "__main__":
     figure_flights(flight_stats(LOGS), "flights_corrected.pdf")
     (OUT.parent / "results_table.tex").write_text(results_table(TABLE_REDUCED))
     (OUT.parent / "results_table_corrected.tex").write_text(results_table(TABLE_CORRECTED))
+    (OUT.parent / "axis_attribution_table.tex").write_text(axis_attribution_table())
     (OUT.parent / "numbers.tex").write_text(numbers_tex(angles, gearing))
     print(f"feasible half-angle range: {np.degrees(lo):.2f}-{np.degrees(hi):.2f} deg")
     print("wrote", OUT / "morphologies.pdf", OUT / "courses.pdf",
           OUT / "spline_parameter.pdf", OUT / "flights.pdf", OUT / "flights_corrected.pdf",
           OUT.parent / "results_table.tex", OUT.parent / "results_table_corrected.tex",
+          OUT.parent / "axis_attribution_table.tex",
           OUT.parent / "numbers.tex", sep="\n      ")

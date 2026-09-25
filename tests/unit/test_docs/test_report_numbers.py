@@ -69,11 +69,18 @@ def test_every_symbol_in_the_report_is_defined_in_its_notation_section() -> None
 
     Cheap to satisfy and easy to lose: a symbol introduced in a later revision
     reads fine to whoever added it and is opaque to everyone else.
+
+    Scope: the body, up to \\appendix (2026-09-25). The appendices state their own
+    notation, because Appendix B keeps the standard flight-dynamics symbols --
+    (U,V,W) and (P,Q,R) -- in which W is a velocity rather than a motor speed.
+    Checking them against the body's Notation section would either fail or force
+    W to be defined twice, so each appendix that introduces symbols defines them
+    where it uses them.
     """
     import re  # noqa: PLC0415
 
     tex = TEX.read_text()
-    body = tex[tex.index(r"\begin{document}"):]
+    body = tex[tex.index(r"\begin{document}"):tex.index("\n\\appendix")]
     i, j = body.index(r"\section*{Notation}"), body.index(r"\section{Airframes}")
     notation, rest = body[i:j], body[:i] + body[j:]
 
