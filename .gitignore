@@ -267,3 +267,6 @@ RECYCLE.BIN/
 *.msp
 # Windows shortcuts
 *.lnk
+
+# rl_games auto-creates ./runs/<experiment>/nn/ when training launches
+runs/
