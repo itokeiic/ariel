@@ -1,0 +1,218 @@
+<?xml version="1.0"?>
+<robot name="cube_parametric_drone" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="genome_id" default="cube_000"/>
+  <xacro:arg name="family" default="quad_x"/>
+  <xacro:arg name="num_rotors" default="4"/>
+
+  <xacro:arg name="body_length" default="0.18"/>
+  <xacro:arg name="body_width" default="0.18"/>
+  <xacro:arg name="body_height" default="0.06"/>
+
+  <xacro:arg name="arm_radius" default="0.010"/>
+  <xacro:arg name="rotor_radius" default="0.055"/>
+  <xacro:arg name="rotor_thickness" default="0.008"/>
+
+  <xacro:arg name="base_mass" default="1.10"/>
+  <xacro:arg name="arm_mass" default="0.035"/>
+  <xacro:arg name="rotor_mass" default="0.022"/>
+  <xacro:arg name="imu_mass" default="0.010"/>
+
+  <xacro:arg name="mount_x_1" default="0.0"/>
+  <xacro:arg name="mount_x_2" default="0.0"/>
+  <xacro:arg name="mount_x_3" default="0.0"/>
+  <xacro:arg name="mount_x_4" default="0.0"/>
+  <xacro:arg name="mount_x_5" default="0.0"/>
+  <xacro:arg name="mount_x_6" default="0.0"/>
+  <xacro:arg name="mount_x_7" default="0.0"/>
+  <xacro:arg name="mount_x_8" default="0.0"/>
+
+  <xacro:arg name="mount_y_1" default="0.0"/>
+  <xacro:arg name="mount_y_2" default="0.0"/>
+  <xacro:arg name="mount_y_3" default="0.0"/>
+  <xacro:arg name="mount_y_4" default="0.0"/>
+  <xacro:arg name="mount_y_5" default="0.0"/>
+  <xacro:arg name="mount_y_6" default="0.0"/>
+  <xacro:arg name="mount_y_7" default="0.0"/>
+  <xacro:arg name="mount_y_8" default="0.0"/>
+
+  <xacro:arg name="arm_len_1" default="0.0"/>
+  <xacro:arg name="arm_len_2" default="0.0"/>
+  <xacro:arg name="arm_len_3" default="0.0"/>
+  <xacro:arg name="arm_len_4" default="0.0"/>
+  <xacro:arg name="arm_len_5" default="0.0"/>
+  <xacro:arg name="arm_len_6" default="0.0"/>
+  <xacro:arg name="arm_len_7" default="0.0"/>
+  <xacro:arg name="arm_len_8" default="0.0"/>
+
+  <xacro:arg name="arm_ang_1" default="0.0"/>
+  <xacro:arg name="arm_ang_2" default="0.0"/>
+  <xacro:arg name="arm_ang_3" default="0.0"/>
+  <xacro:arg name="arm_ang_4" default="0.0"/>
+  <xacro:arg name="arm_ang_5" default="0.0"/>
+  <xacro:arg name="arm_ang_6" default="0.0"/>
+  <xacro:arg name="arm_ang_7" default="0.0"/>
+  <xacro:arg name="arm_ang_8" default="0.0"/>
+
+  <xacro:arg name="rotor_z_1" default="0.0"/>
+  <xacro:arg name="rotor_z_2" default="0.0"/>
+  <xacro:arg name="rotor_z_3" default="0.0"/>
+  <xacro:arg name="rotor_z_4" default="0.0"/>
+  <xacro:arg name="rotor_z_5" default="0.0"/>
+  <xacro:arg name="rotor_z_6" default="0.0"/>
+  <xacro:arg name="rotor_z_7" default="0.0"/>
+  <xacro:arg name="rotor_z_8" default="0.0"/>
+
+  <xacro:arg name="active_1" default="true"/>
+  <xacro:arg name="active_2" default="true"/>
+  <xacro:arg name="active_3" default="true"/>
+  <xacro:arg name="active_4" default="true"/>
+  <xacro:arg name="active_5" default="false"/>
+  <xacro:arg name="active_6" default="false"/>
+  <xacro:arg name="active_7" default="false"/>
+  <xacro:arg name="active_8" default="false"/>
+
+  <xacro:property name="body_length" value="$(arg body_length)"/>
+  <xacro:property name="body_width" value="$(arg body_width)"/>
+  <xacro:property name="body_height" value="$(arg body_height)"/>
+
+  <xacro:property name="arm_radius" value="$(arg arm_radius)"/>
+  <xacro:property name="rotor_radius" value="$(arg rotor_radius)"/>
+  <xacro:property name="rotor_thickness" value="$(arg rotor_thickness)"/>
+
+  <xacro:property name="base_mass" value="$(arg base_mass)"/>
+  <xacro:property name="arm_mass" value="$(arg arm_mass)"/>
+  <xacro:property name="rotor_mass" value="$(arg rotor_mass)"/>
+  <xacro:property name="imu_mass" value="$(arg imu_mass)"/>
+
+  <xacro:property name="base_ixx" value="${0.01 + base_mass*body_width*body_width/12.0}"/>
+  <xacro:property name="base_iyy" value="${0.01 + base_mass*body_length*body_length/12.0}"/>
+  <xacro:property name="base_izz" value="${0.02 + base_mass*(body_length*body_length + body_width*body_width)/12.0}"/>
+
+  <material name="body_dark">
+    <color rgba="0.12 0.12 0.14 1.0"/>
+  </material>
+  <material name="arm_gray">
+    <color rgba="0.82 0.82 0.84 1.0"/>
+  </material>
+  <material name="red">
+    <color rgba="0.88 0.22 0.22 1.0"/>
+  </material>
+  <material name="blue">
+    <color rgba="0.20 0.40 0.92 1.0"/>
+  </material>
+
+  <xacro:macro name="simple_inertial" params="mass ixx iyy izz">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${ixx}" ixy="0.0" ixz="0.0"
+               iyy="${iyy}" iyz="0.0"
+               izz="${izz}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="station" params="idx mount_x mount_y arm_len arm_ang rotor_z color active">
+    <xacro:if value="${active}">
+      <link name="arm_${idx}_link">
+        <xacro:simple_inertial mass="${arm_mass}" ixx="0.0002" iyy="0.0010" izz="0.0010"/>
+        <visual>
+          <origin xyz="${arm_len/2.0} 0 0" rpy="0 1.57079632679 0"/>
+          <geometry>
+            <cylinder radius="${arm_radius}" length="${arm_len}"/>
+          </geometry>
+          <material name="arm_gray"/>
+        </visual>
+        <collision>
+          <origin xyz="${arm_len/2.0} 0 0" rpy="0 1.57079632679 0"/>
+          <geometry>
+            <cylinder radius="${arm_radius*1.1}" length="${arm_len}"/>
+          </geometry>
+        </collision>
+      </link>
+
+      <joint name="arm_${idx}_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="arm_${idx}_link"/>
+        <origin xyz="${mount_x} ${mount_y} 0" rpy="0 0 ${arm_ang}"/>
+      </joint>
+
+      <link name="rotor_${idx}_link">
+        <xacro:simple_inertial mass="${rotor_mass}" ixx="0.00002" iyy="0.00002" izz="0.00004"/>
+        <visual>
+          <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+          <geometry>
+            <cylinder radius="${rotor_radius}" length="${rotor_thickness}"/>
+          </geometry>
+          <material name="${color}"/>
+        </visual>
+        <collision>
+          <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+          <geometry>
+            <cylinder radius="${rotor_radius}" length="${rotor_thickness}"/>
+          </geometry>
+        </collision>
+      </link>
+
+      <joint name="rotor_${idx}_joint" type="continuous">
+        <parent link="arm_${idx}_link"/>
+        <child link="rotor_${idx}_link"/>
+        <origin xyz="${arm_len} 0 ${rotor_z}" rpy="0 0 0"/>
+        <axis xyz="0 0 1"/>
+        <limit effort="2.0" velocity="3000.0"/>
+        <dynamics damping="0.001" friction="0.0"/>
+      </joint>
+    </xacro:if>
+  </xacro:macro>
+
+  <link name="base_link">
+    <xacro:simple_inertial mass="${base_mass}" ixx="${base_ixx}" iyy="${base_iyy}" izz="${base_izz}"/>
+    <visual>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+      <material name="body_dark"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="imu_link">
+    <xacro:simple_inertial mass="${imu_mass}" ixx="0.00001" iyy="0.00001" izz="0.00001"/>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 ${body_height/2.0}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- small top plate for clearer silhouette -->
+  <link name="top_plate_link">
+    <xacro:simple_inertial mass="0.01" ixx="0.00001" iyy="0.00001" izz="0.00001"/>
+    <visual>
+      <origin xyz="0 0 ${body_height/2.0 + 0.006}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length*0.65} ${body_width*0.65} 0.01"/>
+      </geometry>
+      <material name="arm_gray"/>
+    </visual>
+  </link>
+  <joint name="top_plate_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="top_plate_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:station idx="1" mount_x="$(arg mount_x_1)" mount_y="$(arg mount_y_1)" arm_len="$(arg arm_len_1)" arm_ang="$(arg arm_ang_1)" rotor_z="$(arg rotor_z_1)" color="red"  active="$(arg active_1)"/>
+  <xacro:station idx="2" mount_x="$(arg mount_x_2)" mount_y="$(arg mount_y_2)" arm_len="$(arg arm_len_2)" arm_ang="$(arg arm_ang_2)" rotor_z="$(arg rotor_z_2)" color="blue" active="$(arg active_2)"/>
+  <xacro:station idx="3" mount_x="$(arg mount_x_3)" mount_y="$(arg mount_y_3)" arm_len="$(arg arm_len_3)" arm_ang="$(arg arm_ang_3)" rotor_z="$(arg rotor_z_3)" color="red"  active="$(arg active_3)"/>
+  <xacro:station idx="4" mount_x="$(arg mount_x_4)" mount_y="$(arg mount_y_4)" arm_len="$(arg arm_len_4)" arm_ang="$(arg arm_ang_4)" rotor_z="$(arg rotor_z_4)" color="blue" active="$(arg active_4)"/>
+  <xacro:station idx="5" mount_x="$(arg mount_x_5)" mount_y="$(arg mount_y_5)" arm_len="$(arg arm_len_5)" arm_ang="$(arg arm_ang_5)" rotor_z="$(arg rotor_z_5)" color="red"  active="$(arg active_5)"/>
+  <xacro:station idx="6" mount_x="$(arg mount_x_6)" mount_y="$(arg mount_y_6)" arm_len="$(arg arm_len_6)" arm_ang="$(arg arm_ang_6)" rotor_z="$(arg rotor_z_6)" color="blue" active="$(arg active_6)"/>
+  <xacro:station idx="7" mount_x="$(arg mount_x_7)" mount_y="$(arg mount_y_7)" arm_len="$(arg arm_len_7)" arm_ang="$(arg arm_ang_7)" rotor_z="$(arg rotor_z_7)" color="red"  active="$(arg active_7)"/>
+  <xacro:station idx="8" mount_x="$(arg mount_x_8)" mount_y="$(arg mount_y_8)" arm_len="$(arg arm_len_8)" arm_ang="$(arg arm_ang_8)" rotor_z="$(arg rotor_z_8)" color="blue" active="$(arg active_8)"/>
+
+</robot>

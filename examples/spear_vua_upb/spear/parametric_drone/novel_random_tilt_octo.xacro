@@ -1,0 +1,206 @@
+<?xml version="1.0"?>
+<robot name="novel_random_tilt_octo" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <material name="mat_core"><color rgba="0.15 0.15 0.18 1.0"/></material>
+  <material name="mat_arm"><color rgba="0.22 0.22 0.24 1.0"/></material>
+  <material name="mat_motor"><color rgba="0.70 0.70 0.72 1.0"/></material>
+  <material name="mat_rotor_ccw"><color rgba="0.10 0.10 0.10 0.85"/></material>
+  <material name="mat_rotor_cw"><color rgba="0.05 0.25 0.55 0.85"/></material>
+
+  <xacro:macro name="inertial_box" params="mass x y z">
+    <inertial><origin xyz="0 0 0" rpy="0 0 0"/><mass value="${mass}"/><inertia ixx="${mass*(y*y + z*z)/12.0}" ixy="0.0" ixz="0.0" iyy="${mass*(x*x + z*z)/12.0}" iyz="0.0" izz="${mass*(x*x + y*y)/12.0}"/></inertial>
+  </xacro:macro>
+  <xacro:macro name="inertial_cylinder_z" params="mass radius length">
+    <inertial><origin xyz="0 0 0" rpy="0 0 0"/><mass value="${mass}"/><inertia ixx="${mass*(3*radius*radius + length*length)/12.0}" ixy="0.0" ixz="0.0" iyy="${mass*(3*radius*radius + length*length)/12.0}" iyz="0.0" izz="${0.5*mass*radius*radius}"/></inertial>
+  </xacro:macro>
+
+  <link name="base_link">
+    <visual><geometry><cylinder radius="0.050000" length="0.010000"/></geometry><material name="mat_core"/></visual>
+    <collision><geometry><cylinder radius="0.050000" length="0.010000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.400000" radius="0.050000" length="0.010000"/>
+  </link>
+
+  <link name="imu_link">
+    <visual><origin xyz="0 0 0.012" rpy="0 0 0"/><geometry><box size="0.012 0.012 0.004"/></geometry><material name="mat_motor"/></visual>
+    <collision><origin xyz="0 0 0.012" rpy="0 0 0"/><geometry><box size="0.012 0.012 0.004"/></geometry></collision>
+    <xacro:inertial_box mass="0.005" x="0.012" y="0.012" z="0.004"/>
+  </link>
+  <joint name="imu_joint" type="fixed"><parent link="base_link"/><child link="imu_link"/><origin xyz="0 0 0" rpy="0 0 0"/></joint>
+
+  <!-- arm_1: spin=ccw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(-0.2880876948534879, -0.34569564659394203, -0.5699870937327997) -->
+  <link name="arm_1_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_1_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_1_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_1_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_1_arm_to_motor_joint" type="fixed"><parent link="arm_1_arm_link"/><child link="arm_1_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_1_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_ccw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_1_motor_to_rotor_joint" type="fixed"><parent link="arm_1_motor_link"/><child link="arm_1_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="-0.288088 -0.345696 -0.569987"/></joint>
+
+  <!-- arm_2: spin=cw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(-0.07047738322490009, 0.4444467779765881, -0.3321471142214127) -->
+  <link name="arm_2_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_2_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_2_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.785398"/></joint>
+
+  <link name="arm_2_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_2_arm_to_motor_joint" type="fixed"><parent link="arm_2_arm_link"/><child link="arm_2_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_2_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_cw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_2_motor_to_rotor_joint" type="fixed"><parent link="arm_2_motor_link"/><child link="arm_2_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="-0.070477 0.444447 -0.332147"/></joint>
+
+  <!-- arm_3: spin=ccw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(-0.038205691750932864, -0.44837520573492096, 0.21203938490749352) -->
+  <link name="arm_3_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_3_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_3_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 1.570796"/></joint>
+
+  <link name="arm_3_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_3_arm_to_motor_joint" type="fixed"><parent link="arm_3_arm_link"/><child link="arm_3_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_3_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_ccw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_3_motor_to_rotor_joint" type="fixed"><parent link="arm_3_motor_link"/><child link="arm_3_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="-0.038206 -0.448375 0.212039"/></joint>
+
+  <!-- arm_4: spin=cw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(0.350626501446798, -0.2820656953320956, -0.4956734008447006) -->
+  <link name="arm_4_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_4_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_4_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 2.356194"/></joint>
+
+  <link name="arm_4_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_4_arm_to_motor_joint" type="fixed"><parent link="arm_4_arm_link"/><child link="arm_4_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_4_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_cw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_4_motor_to_rotor_joint" type="fixed"><parent link="arm_4_motor_link"/><child link="arm_4_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="0.350627 -0.282066 -0.495673"/></joint>
+
+  <!-- arm_5: spin=ccw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(-0.3969269550673565, 0.21201177406209487, -0.5642433366743156) -->
+  <link name="arm_5_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_5_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_5_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 3.141593"/></joint>
+
+  <link name="arm_5_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_5_arm_to_motor_joint" type="fixed"><parent link="arm_5_arm_link"/><child link="arm_5_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_5_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_ccw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_5_motor_to_rotor_joint" type="fixed"><parent link="arm_5_motor_link"/><child link="arm_5_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="-0.396927 0.212012 -0.564243"/></joint>
+
+  <!-- arm_6: spin=cw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(0.08810128077178958, 0.441291473208321, 0.006426345724034888) -->
+  <link name="arm_6_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_6_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_6_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 3.926991"/></joint>
+
+  <link name="arm_6_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_6_arm_to_motor_joint" type="fixed"><parent link="arm_6_arm_link"/><child link="arm_6_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_6_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_cw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_6_motor_to_rotor_joint" type="fixed"><parent link="arm_6_motor_link"/><child link="arm_6_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="0.088101 0.441291 0.006426"/></joint>
+
+  <!-- arm_7: spin=ccw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(0.44375969429347845, 0.07468154872897702, -0.3613948191760218) -->
+  <link name="arm_7_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_7_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_7_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 4.712389"/></joint>
+
+  <link name="arm_7_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_7_arm_to_motor_joint" type="fixed"><parent link="arm_7_arm_link"/><child link="arm_7_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_7_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_ccw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_7_motor_to_rotor_joint" type="fixed"><parent link="arm_7_motor_link"/><child link="arm_7_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="0.443760 0.074682 -0.361395"/></joint>
+
+  <!-- arm_8: spin=cw, propsize=2.0, pitch=0.045, blades=2, rotor_rpy=(-0.2647676356203372, -0.36386549592949363, 0.05392977672386001) -->
+  <link name="arm_8_arm_link">
+    <visual><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry><material name="mat_arm"/></visual>
+    <collision><origin xyz="0.080000 0 0" rpy="0 1.57079632679 0"/><geometry><cylinder radius="0.008000" length="0.160000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.028800" radius="0.008000" length="0.160000"/>
+  </link>
+  <joint name="base_to_arm_8_arm_joint" type="fixed"><parent link="base_link"/><child link="arm_8_arm_link"/><origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 5.497787"/></joint>
+
+  <link name="arm_8_motor_link">
+    <visual><geometry><cylinder radius="0.014000" length="0.020000"/></geometry><material name="mat_motor"/></visual>
+    <collision><geometry><cylinder radius="0.014000" length="0.020000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.060000" radius="0.014000" length="0.020000"/>
+  </link>
+  <joint name="arm_8_arm_to_motor_joint" type="fixed"><parent link="arm_8_arm_link"/><child link="arm_8_motor_link"/><origin xyz="0.160000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/></joint>
+
+  <link name="arm_8_rotor_link">
+    <visual><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry><material name="mat_rotor_cw"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0.000000 0.000000 0.000000"/><geometry><cylinder radius="0.063500" length="0.002000"/></geometry></collision>
+    <xacro:inertial_cylinder_z mass="0.010000" radius="0.010000" length="0.006000"/>
+  </link>
+  <joint name="arm_8_motor_to_rotor_joint" type="fixed"><parent link="arm_8_motor_link"/><child link="arm_8_rotor_link"/><origin xyz="0.000000 0.000000 0.016000" rpy="-0.264768 -0.363865 0.053930"/></joint>
+
+</robot>

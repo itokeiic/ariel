@@ -1,0 +1,240 @@
+<?xml version="1.0"?>
+<robot name="transformable_quad_gp" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="robot_name" default="transformable_quad_gp"/>
+
+  <xacro:arg name="body_length" default="0.24"/>
+  <xacro:arg name="body_width" default="0.12"/>
+  <xacro:arg name="body_height" default="0.05"/>
+
+  <xacro:arg name="body_mass" default="1.10"/>
+  <xacro:arg name="hinge_mass" default="0.02"/>
+  <xacro:arg name="arm_mass" default="0.08"/>
+  <xacro:arg name="tip_mass" default="0.05"/>
+  <xacro:arg name="rotor_mass" default="0.02"/>
+
+  <xacro:arg name="arm_radius" default="0.012"/>
+  <xacro:arg name="arm_length" default="0.12"/>
+  <xacro:arg name="tip_radius" default="0.010"/>
+  <xacro:arg name="tip_length" default="0.08"/>
+  <xacro:arg name="rotor_radius" default="0.06"/>
+  <xacro:arg name="rotor_thickness" default="0.008"/>
+
+  <xacro:arg name="hub_x" default="0.055"/>
+  <xacro:arg name="hub_y" default="0.035"/>
+  <xacro:arg name="hub_z" default="0.02"/>
+
+  <xacro:arg name="front_yaw" default="0.78539816339"/>
+  <xacro:arg name="rear_yaw" default="2.35619449019"/>
+  <xacro:arg name="body_z" default="0.03"/>
+  <xacro:arg name="rotor_mount_z" default="0.01"/>
+
+  <xacro:property name="body_length" value="$(arg body_length)"/>
+  <xacro:property name="body_width" value="$(arg body_width)"/>
+  <xacro:property name="body_height" value="$(arg body_height)"/>
+
+  <xacro:property name="body_mass" value="$(arg body_mass)"/>
+  <xacro:property name="hinge_mass" value="$(arg hinge_mass)"/>
+  <xacro:property name="arm_mass" value="$(arg arm_mass)"/>
+  <xacro:property name="tip_mass" value="$(arg tip_mass)"/>
+  <xacro:property name="rotor_mass" value="$(arg rotor_mass)"/>
+
+  <xacro:property name="arm_radius" value="$(arg arm_radius)"/>
+  <xacro:property name="arm_length" value="$(arg arm_length)"/>
+  <xacro:property name="tip_radius" value="$(arg tip_radius)"/>
+  <xacro:property name="tip_length" value="$(arg tip_length)"/>
+  <xacro:property name="rotor_radius" value="$(arg rotor_radius)"/>
+  <xacro:property name="rotor_thickness" value="$(arg rotor_thickness)"/>
+
+  <xacro:property name="hub_x" value="$(arg hub_x)"/>
+  <xacro:property name="hub_y" value="$(arg hub_y)"/>
+  <xacro:property name="hub_z" value="$(arg hub_z)"/>
+
+  <xacro:property name="front_yaw" value="$(arg front_yaw)"/>
+  <xacro:property name="rear_yaw" value="$(arg rear_yaw)"/>
+  <xacro:property name="body_z" value="$(arg body_z)"/>
+  <xacro:property name="rotor_mount_z" value="$(arg rotor_mount_z)"/>
+
+  <xacro:property name="arm_half" value="${arm_length / 2.0}"/>
+  <xacro:property name="tip_half" value="${tip_length / 2.0}"/>
+  <xacro:property name="imu_z" value="${body_z + body_height / 2.0 + 0.005}"/>
+
+  <material name="body_dark">
+    <color rgba="0.10 0.10 0.12 1.0"/>
+  </material>
+  <material name="arm_gray">
+    <color rgba="0.78 0.78 0.82 1.0"/>
+  </material>
+  <material name="joint_red">
+    <color rgba="0.85 0.18 0.18 1.0"/>
+  </material>
+  <material name="rotor_black">
+    <color rgba="0.03 0.03 0.03 1.0"/>
+  </material>
+
+  <xacro:macro name="box_inertial" params="mass x y z">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (y*y + z*z) / 12.0}"
+        ixy="0.0" ixz="0.0"
+        iyy="${mass * (x*x + z*z) / 12.0}"
+        iyz="0.0"
+        izz="${mass * (x*x + y*y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="cyl_inertial_x" params="mass radius length">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${0.5 * mass * radius * radius}"
+        ixy="0.0" ixz="0.0"
+        iyy="${mass * (3*radius*radius + length*length) / 12.0}"
+        iyz="0.0"
+        izz="${mass * (3*radius*radius + length*length) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${body_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+      <material name="body_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${body_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertial mass="${body_mass}" x="${body_length}" y="${body_width}" z="${body_height}"/>
+  </link>
+
+  <link name="imu_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.01"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 ${imu_z}" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="arm_chain" params="prefix mount_x mount_y mount_z base_yaw">
+    <link name="${prefix}_hinge_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.02 0.02 0.02"/>
+        </geometry>
+        <material name="joint_red"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.02 0.02 0.02"/>
+        </geometry>
+      </collision>
+      <xacro:box_inertial mass="${hinge_mass}" x="0.02" y="0.02" z="0.02"/>
+    </link>
+
+    <joint name="${prefix}_yaw_mount_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${prefix}_hinge_link"/>
+      <origin xyz="${mount_x} ${mount_y} ${mount_z}" rpy="0 0 ${base_yaw}"/>
+    </joint>
+
+    <link name="${prefix}_arm_link">
+      <visual>
+        <origin xyz="${arm_half} 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${arm_radius}" length="${arm_length}"/>
+        </geometry>
+        <material name="arm_gray"/>
+      </visual>
+      <collision>
+        <origin xyz="${arm_half} 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${arm_radius}" length="${arm_length}"/>
+        </geometry>
+      </collision>
+      <xacro:cyl_inertial_x mass="${arm_mass}" radius="${arm_radius}" length="${arm_length}"/>
+    </link>
+
+    <joint name="${prefix}_fold_joint" type="revolute">
+      <parent link="${prefix}_hinge_link"/>
+      <child link="${prefix}_arm_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-1.45" upper="0.30" effort="20.0" velocity="2.0"/>
+      <dynamics damping="0.2" friction="0.05"/>
+    </joint>
+
+    <link name="${prefix}_tip_link">
+      <visual>
+        <origin xyz="${tip_half} 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${tip_radius}" length="${tip_length}"/>
+        </geometry>
+        <material name="joint_red"/>
+      </visual>
+      <collision>
+        <origin xyz="${tip_half} 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${tip_radius}" length="${tip_length}"/>
+        </geometry>
+      </collision>
+      <xacro:cyl_inertial_x mass="${tip_mass}" radius="${tip_radius}" length="${tip_length}"/>
+    </link>
+
+    <joint name="${prefix}_extend_joint" type="prismatic">
+      <parent link="${prefix}_arm_link"/>
+      <child link="${prefix}_tip_link"/>
+      <origin xyz="${arm_length} 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="0.0" upper="0.10" effort="20.0" velocity="0.5"/>
+      <dynamics damping="5.0" friction="0.5"/>
+    </joint>
+
+    <link name="${prefix}_rotor_link">
+      <visual>
+        <origin xyz="${tip_length} 0 ${rotor_mount_z}" rpy="1.57079632679 0 0"/>
+        <geometry>
+          <cylinder radius="${rotor_radius}" length="${rotor_thickness}"/>
+        </geometry>
+        <material name="rotor_black"/>
+      </visual>
+      <collision>
+        <origin xyz="${tip_length} 0 ${rotor_mount_z}" rpy="1.57079632679 0 0"/>
+        <geometry>
+          <cylinder radius="${rotor_radius}" length="${rotor_thickness}"/>
+        </geometry>
+      </collision>
+      <xacro:cyl_inertial_x mass="${rotor_mass}" radius="${rotor_radius}" length="${rotor_thickness}"/>
+    </link>
+
+    <joint name="${prefix}_rotor_joint" type="continuous">
+      <parent link="${prefix}_tip_link"/>
+      <child link="${prefix}_rotor_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit effort="2.0" velocity="3000.0"/>
+      <dynamics damping="0.001" friction="0.0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:arm_chain prefix="front_left"  mount_x="${ hub_x}" mount_y="${ hub_y}"  mount_z="${hub_z}" base_yaw="${ front_yaw}"/>
+  <xacro:arm_chain prefix="front_right" mount_x="${ hub_x}" mount_y="${-hub_y}"  mount_z="${hub_z}" base_yaw="${-front_yaw}"/>
+  <xacro:arm_chain prefix="rear_left"   mount_x="${-hub_x}" mount_y="${ hub_y}"  mount_z="${hub_z}" base_yaw="${ rear_yaw}"/>
+  <xacro:arm_chain prefix="rear_right"  mount_x="${-hub_x}" mount_y="${-hub_y}"  mount_z="${hub_z}" base_yaw="${-rear_yaw}"/>
+
+</robot>
