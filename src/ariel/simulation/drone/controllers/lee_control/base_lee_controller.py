@@ -131,7 +131,9 @@ class BaseLeeController:
         # conservative guard against force explosion, but it is a *software*
         # limit that sits well below what an airframe can physically do: a
         # SPEAR-matched quad (thrust-to-weight 5.2) has a 50 m/s² lateral
-        # budget, and a 90° slalom flown at 6 m/s demands 21 m/s². While this
+        # budget, and a 90° slalom flown at 6 m/s nominal demands 32 m/s² at a
+        # typical gate and 41 at the last (SlalomCourse.reference_demand; this
+        # said 21 until 2026-09-24, from the three-gate circle). While this
         # clamp binds, every airframe is limited by the same constant rather
         # than by its own geometry or thrust — which makes any morphology
         # comparison measure the clamp. Raise it via ``cfg.max_accel`` when

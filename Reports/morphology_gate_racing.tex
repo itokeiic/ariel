@@ -58,8 +58,9 @@ it is named, and an overdot denotes a rate of change with respect to time.
   $s$ & leg length, gate to gate along the path; held fixed at \SI{2.4}{\metre} & \si{\metre} \\
   $d$ & gate spacing along the course axis & \si{\metre} \\
   $A$ & lateral amplitude of the weave & \si{\metre} \\
-  $R$ & corner radius & \si{\metre} \\
-  $a_{\mathrm{lat}}$ & lateral acceleration demanded at speed $v$ & \si{\metre\per\second\squared} \\
+  % DRAFT 2026-09-24: R ("corner radius", the three-gate circle) removed;
+  % a_lat was "lateral acceleration demanded at speed $v$", i.e. v^2/R.
+  $a_{\mathrm{lat}}$ & lateral acceleration of the reference, $|\dot p_{\rm ref}\times\ddot p_{\rm ref}|/|\dot p_{\rm ref}|$ & \si{\metre\per\second\squared} \\
   $\ell$ & total path length, lead-out included & \si{\metre} \\
   $v$ & nominal speed; see the note on what it measures & \si{\metre\per\second} \\
   \midrule
@@ -146,16 +147,34 @@ Roll authority $\alpha_\phi$ varies by a factor of \num{\RollRatio} across the s
 %   pass detector requires.}
 %   \label{fig:courses}
 % \end{figure}
+% DRAFT (2026-09-24) -- for the author to reword. SUPERSEDED the same day, the
+% author's text:
+%   "... so
+%   \begin{equation}
+%     d = s\cos(\theta/2), \qquad A = \tfrac{s}{2}\sin(\theta/2), \qquad
+%     R = \frac{s}{2\sin(\theta/2)}, \qquad a_{\mathrm{lat}} = \frac{v^2}{R},
+%   \end{equation}
+%   for gate spacing, lateral amplitude, corner radius, and the lateral
+%   acceleration demanded at speed $v$. Holding $s$ fixed rather than $d$ is what
+%   makes $R$ fall monotonically with $\theta$: at fixed spacing, a sharper turn
+%   also lengthens the legs, and the corner ends up \emph{wider}."
+% R is the circle through three consecutive gates, which the drone does not fly,
+% and v^2/R is about 1.5x below the reference's demand at a typical gate. At
+% fixed spacing the reference's tightest radius does fall monotonically. The
+% reason that survives is course length. Sources:
+% docs/drone_morphology_gate_racing.md section 5 (2026-09-24 note);
+% SlalomCourse.reference_demand; macros from course_demand_vals in
+% Reports/make_figures.py.
 Difficulty is given by the turn angle $\theta$ demanded at each gate, at fixed leg length $s=\SI{2.4}{\metre}$ (Figure~\ref{fig:courses}). Consecutive legs run at $\pm\theta/2$ to the course axis, so
 
 \begin{equation}
   d = s\cos(\theta/2), \qquad
-  A = \tfrac{s}{2}\sin(\theta/2), \qquad
-  R = \frac{s}{2\sin(\theta/2)}, \qquad
-  a_{\mathrm{lat}} = \frac{v^2}{R},
+  A = \tfrac{s}{2}\sin(\theta/2),
 \end{equation}
 
-for gate spacing, lateral amplitude, corner radius, and the lateral acceleration demanded at speed $v$. Holding $s$ fixed rather than $d$ is what makes $R$ fall monotonically with $\theta$: at fixed spacing, a sharper turn also lengthens the legs, and the corner ends up \emph{wider}.
+for gate spacing and lateral amplitude. Holding $s$ fixed rather than $d$ keeps the course the same length at every turn angle: the polyline through the waypoints is \SI{\CoursePoly}{\metre} on every course, and the reference flown along it \SIrange{\CourseArcLo}{\CourseArcHi}{\metre}. At a fixed spacing of \SI{2.0}{\metre}, the course would grow from \SI{\SpacingPolyLo}{\metre} at $\theta=60^\circ$ to \SI{\SpacingPolyHi}{\metre} at $120^\circ$, and difficulty would be confounded with flight length.
+
+The demand is measured on the reference trajectory, not inferred from the gate layout. The reference is a cubic B-spline through the gates, timed uniformly in its parameter (Figure~\ref{fig:splineparam}), so it slows where it bends hardest. Its lateral acceleration $a_{\mathrm{lat}} = |\dot p_{\rm ref}\times\ddot p_{\rm ref}|/|\dot p_{\rm ref}|$ peaks at each gate. At a nominal speed of \SI{\DemandSpeed}{\metre\per\second}, the peak at a typical gate (the median over gates) is \SI{\DemSixty}{}, \SI{\DemNinety}{} and \SI{\DemOneTwenty}{\metre\per\second\squared} for $\theta=60^\circ$, $90^\circ$ and $120^\circ$. The last scored gate demands \SIrange{\DemLastLo}{\DemLastHi}{\percent} more than a typical gate, because as the reference nears the clamped end of the spline it both speeds up and bends more tightly.
 
 
 
@@ -209,7 +228,12 @@ for gate spacing, lateral amplitude, corner radius, and the lateral acceleration
 % small), because it retains both mirror planes. What is compared is thus geometry
 % at matched commanded bandwidth, not geometry plus an accidental tuning
 % advantage.
-Each airframe is scored by the maximum speed at which it still completes the course without missing a gate. The speeds are located by bisection. A gate counts as passed only if the drone's offset from the gate centre, measured \emph{in the gate plane at the crossing} and including its vertical component, is within the gate radius of \SI{0.5}{\metre}. That offset is a Euclidean norm, so the gate is a circular opening rather than the square frame the word ``gate'' usually denotes; a square of the same half-width encloses \SI{27}{\percent} more area, all of it near the diagonals, so the criterion used here is the stricter of the two. Bisection is valid because completion is monotone in speed; the assumption is checked on every run and held in all cases reported here.
+Each airframe is scored by the maximum speed at which it still completes the course without missing a gate. The speeds are located by bisection. A gate counts as passed only if the drone's offset from the gate centre, measured \emph{in the gate plane at the crossing} and including its vertical component, is within the gate radius of \SI{0.5}{\metre}. That offset is a Euclidean norm, so the gate is a circular opening rather than the square frame the word ``gate'' usually denotes; a square of the same half-width encloses \SI{27}{\percent} more area, all of it near the diagonals, so the criterion used here is the stricter of the two.
+% DRAFT (2026-09-24) -- for the author to reword. The plant has no gate or
+% collision geometry (src/ariel/simulation/drone/plant.py, drone_simulator.py);
+% the gates enter only the scoring in rollout().
+Gates have no physical presence in the simulation: the test is applied to the drone's centre of mass, so the airframe's extent (rotor tips up to \SI{\RotorTipReach}{\metre} from the centre) is not checked against the opening.
+Bisection is valid because completion is monotone in speed; the assumption is checked on every run and held in all cases reported here.
 
 Two conditions matter for the numbers below. Feedforward of the reference velocity and acceleration is enabled (c.f. section \ref{sec:feedforward}), and the controller cascade (outer position loop and inner attitude loop) is tuned so the position loop sits well below the attitude loop ($\omega_n^{\mathrm{att}}=\SI{24}{\radian\per\second}$, $\omega_n^{\mathrm{pos}}=\SI{2.0}{\radian\per\second}$, $\zeta=1$). Under the inherited tuning, the loops were separated by only a factor of \num{3.2}, motor saturation sat at \SIrange{0.1}{2}{\percent}, and the \emph{controller} was the active constraint. In that regime, the same airframe wins on every course, and the spread across the family is \SI{3}{\percent}. % DRAFT 2026-09-17: model named in the next sentence; not re-measured on the corrected model.
 At the tuned operating point in the reduced model of Section~\ref{sec:results}, every airframe saturates its motors \SIrange{15}{21}{\percent} of the time, so the airframe binds the performance instead.

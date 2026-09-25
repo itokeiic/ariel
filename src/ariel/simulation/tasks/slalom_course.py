@@ -6,18 +6,41 @@ nothing of the airframe and every morphology scores the same. This module
 builds a course whose difficulty is one interpretable number: the turn angle
 demanded at each gate.
 
-Parameterised by turn angle at **fixed leg length**, which matters. Holding the
-longitudinal spacing fixed instead makes the knob non-monotonic: a sharper turn
-also lengthens the legs, so the corner ends up *wider* (radius 4.00 / 2.31 /
-2.00 / 2.31 m for 30/60/90/120 degrees). With the leg fixed, corner radius falls
-monotonically with turn angle, which is what "harder" should mean.
+Parameterised by turn angle at **fixed leg length**, which matters. With the
+leg fixed, the course is the same length at every turn angle (polyline
+``leg * n_legs``; the flown spline varies by about 3%), so the turn angle is the
+only thing that changes. Holding the longitudinal spacing fixed instead makes
+the legs longer as the turn sharpens: at 2.0 m spacing the polyline grows from
+33 m at 30 degrees to 64 m at 120. Difficulty would then be confounded with
+course length, and anything that accumulates over a flight -- altitude sag,
+drift -- would grow with it.
+
+Difficulty is measured on the reference the drone is asked to fly, not on the
+gate layout. The B-spline through the gates is a smooth weave that bends
+hardest at each gate, and the demand is its lateral acceleration there
+(``SlalomCourse.reference_demand``). At fixed leg length both the typical
+(median) and the worst gate's demand rise monotonically with turn angle. The
+worst gate is the last scored one, 24-44% above the typical gate: nearing the
+spline's clamped end, the reference both speeds up (5-14% at the last gate) and
+bends more tightly (3-10%), measured over 60-120 degrees.
+
+*Corrected 2026-09-24.* This docstring previously justified fixed leg length
+by a "corner radius" ``s / (2 sin(theta/2))``, the circle through three
+consecutive gates, and took ``speed**2 / radius`` as the demanded lateral
+acceleration. It argued that at fixed spacing that radius is non-monotonic
+(4.00 / 2.31 / 2.00 / 2.31 m for 30/60/90/120 degrees), so the corner ends up
+*wider*. The drone does not fly that circle. On the reference, the tightest
+radius is 4-14x smaller, and the lateral acceleration is 1.5x
+``speed**2 / radius`` at a typical gate and up to 2.2x at the last one. At fixed
+spacing the reference's tightest radius falls monotonically after all. The circle's radius is kept as
+``gate_circle_radius``, which describes the layout and nothing more.
 
 For a leg length ``s`` and turn angle ``theta``, consecutive legs run at
 ``+/- theta/2`` to the course axis, so:
 
     x-spacing  d = s * cos(theta/2)
     amplitude  A = (s/2) * sin(theta/2)
-    corner radius R = s / (2 * sin(theta/2))
+    gate-circle radius  s / (2 * sin(theta/2))   (layout only; see above)
 
 ``gate_yaw`` is the bisector of the two adjacent legs, which is what the pass
 detector needs: ``GateChecker`` builds the gate normal as
@@ -48,6 +71,34 @@ import numpy.typing as npt
 Array = npt.NDArray[np.float64]
 
 
+@dataclass(frozen=True)
+class ReferenceDemand:
+    """What the reference trajectory asks of the vehicle, over the scored gates.
+
+    Attributes:
+        a_lat_per_gate: peak lateral acceleration, ``|v x a| / |v|``, near each
+            scored gate (each reference sample is assigned to its nearest
+            gate), m/s^2.
+        a_lat_peak: the largest of those -- the corner that decides completion.
+            On a uniform course this is the *last* scored gate, not a typical
+            one: nearing the spline's clamped end, the reference both speeds
+            up and bends more tightly.
+        a_lat_median: median over gates -- the typical corner. Robust to the
+            startup ramp (low) and the finish (high).
+        min_radius: tightest radius of curvature of the reference over the
+            scored gates, m. Geometric, so independent of timing. Not a demand
+            on its own: ``speed**2 / min_radius`` overstates it badly, because
+            the reference is slow where it is tightest.
+        arc_length: length of the whole reference, lead-out included, m.
+    """
+
+    a_lat_per_gate: tuple[float, ...]
+    a_lat_peak: float
+    a_lat_median: float
+    min_radius: float
+    arc_length: float
+
+
 @dataclass
 class SlalomCourse:
     """A slalom course plus the difficulty it actually produces.
@@ -65,9 +116,11 @@ class SlalomCourse:
         leg: leg length, m.
         spacing: mean longitudinal gate spacing, m.
         amplitude: mean lateral offset, m.
-        radius: corner radius, m -- the difficulty that matters, since demanded
-            lateral acceleration is ``speed**2 / radius``.
-        path_length: length of the full flown path including lead-out, m.
+        gate_circle_radius: radius of the circle through three consecutive
+            gates, m. Describes the layout only: the reference bends far more
+            tightly than this, so ``speed**2 / gate_circle_radius`` understates
+            the demand about twofold. Use ``reference_demand`` for that.
+        path_length: length of the full polyline including lead-out, m.
         periodic: always False; a slalom is flown once, not looped.
     """
 
@@ -81,7 +134,7 @@ class SlalomCourse:
     leg: float
     spacing: float
     amplitude: float
-    radius: float
+    gate_circle_radius: float
     path_length: float
     periodic: bool = field(default=False)
 
@@ -103,9 +156,72 @@ class SlalomCourse:
         v = v / np.linalg.norm(v, axis=1, keepdims=True)
         return np.degrees(np.arccos(np.clip(np.sum(v[:-1] * v[1:], axis=1), -1.0, 1.0)))
 
-    def lateral_acceleration(self, speed: float) -> float:
-        """Lateral acceleration this course demands at ``speed``, m/s^2."""
-        return float(speed) ** 2 / self.radius
+    def reference_demand(self, speed: float, startup_time: float = 3.0,
+                         dt: float = 0.002) -> ReferenceDemand:
+        """What the reference trajectory demands at nominal ``speed``.
+
+        Builds the reference exactly as the sweep does (``BSplineGateTrajectory``
+        over the path, offsets fitted so it interpolates the gates, timed by
+        ``traversal_time``) and measures it from the start until it crosses the
+        last scored gate's plane. The lead-out is flown but not scored, so it is
+        excluded.
+
+        The spline is timed uniformly in its parameter, not in arc length, so
+        the reference slows where it bends hardest. The demand is therefore
+        ``|v x a| / |v|`` measured along the timed reference. ``speed**2`` times
+        the peak curvature would overstate it by ~7x at 120 degrees.
+        """
+        # Imported here: the course is plain geometry, and only this method
+        # needs the trajectory stack.
+        from ariel.simulation.drone.controllers.trajectory_generation.bspline_gate_trajectory import (  # noqa: E501
+            BSplineGateTrajectory,
+        )
+
+        tr = BSplineGateTrajectory(self.trajectory_config())
+        tr.fit_offsets_to_gates()
+        tr.total_time = self.traversal_time(speed, startup_time=startup_time)
+        tr.startup_time = startup_time
+        last_normal = np.array([np.cos(self.gate_yaw[-1]), np.sin(self.gate_yaw[-1]), 0.0])
+
+        def scored(pos: Array) -> int:
+            """Samples up to and including the last scored gate's plane."""
+            past = np.flatnonzero((pos - self.gate_pos[-1]) @ last_normal >= 0.0)
+            return int(past[0]) + 1 if len(past) else len(pos)
+
+        # Demand: along the timed reference, as the controller receives it.
+        ts = np.arange(0.0, tr.total_time + dt / 2, dt)
+        pva = [tr.evaluate(float(t)) for t in ts]
+        pos = np.array([p for p, _, _ in pva])
+        end = scored(pos)
+        vel = np.array([v for _, v, _ in pva[:end]])
+        acc = np.array([a for _, _, a in pva[:end]])
+        spd = np.linalg.norm(vel, axis=1)
+        a_lat = np.linalg.norm(np.cross(vel, acc), axis=1) / np.maximum(spd, 1e-9)
+        nearest = np.argmin(
+            np.linalg.norm(pos[:end, None, :] - self.gate_pos[None], axis=2), axis=1)
+        per_gate = tuple(float(a_lat[nearest == k].max()) if np.any(nearest == k) else 0.0
+                         for k in range(len(self.gate_pos)))
+
+        # Curvature: along the spline parameter, where it is well defined even
+        # at the start. Measured through time it is 0/0 while the ramp is at
+        # rest, which returned radii of 0.01-0.04 m.
+        sp = tr.spline
+        assert sp is not None, "fit_offsets_to_gates leaves a spline"
+        u = np.linspace(sp.u_min, sp.u_max, 20001)
+        p_u = np.array([sp.position(x) for x in u])
+        d1 = np.array([sp.velocity(x, 1.0) for x in u])
+        d2 = np.array([sp.acceleration(x, 1.0, 0.0) for x in u])
+        u_end = scored(p_u)
+        kappa = (np.linalg.norm(np.cross(d1[:u_end], d2[:u_end]), axis=1)
+                 / np.linalg.norm(d1[:u_end], axis=1) ** 3)
+
+        return ReferenceDemand(
+            a_lat_per_gate=per_gate,
+            a_lat_peak=max(per_gate),
+            a_lat_median=float(np.median(per_gate)),
+            min_radius=float(1.0 / kappa.max()) if kappa.max() > 0 else float("inf"),
+            arc_length=float(np.sum(np.linalg.norm(np.diff(p_u, axis=0), axis=1))),
+        )
 
     def traversal_time(self, speed: float, startup_time: float = 3.0) -> float:
         """``total_time`` for BSplineGateTrajectory at a fixed nominal speed.
@@ -221,7 +337,7 @@ def slalom_gates(
     yaw[1:-1] = 0.5 * (leg_dir[:-1] + leg_dir[1:])
 
     mean_theta = float(np.mean(thetas))
-    radius = leg / (2.0 * np.sin(mean_theta / 2.0)) if mean_theta > 1e-9 else float("inf")
+    circle = leg / (2.0 * np.sin(mean_theta / 2.0)) if mean_theta > 1e-9 else float("inf")
 
     first = pos[1, :2] - pos[0, :2]
     first = first / np.linalg.norm(first)
@@ -239,6 +355,6 @@ def slalom_gates(
         leg=float(leg),
         spacing=spacing,
         amplitude=float(np.mean((leg / 2.0) * np.sin(thetas / 2.0))),
-        radius=float(radius),
+        gate_circle_radius=float(circle),
         path_length=float(leg * n_legs),
     )

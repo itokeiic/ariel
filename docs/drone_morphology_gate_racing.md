@@ -408,6 +408,10 @@ lateral acceleration (8.9 vs 9.5 m/s²) but clip 0.1% and 8.5% respectively, so
 what binds is the *rate* of attitude change, which scales with speed rather than
 with turn angle.
 
+*(2026-09-24: 8.9 and 9.5 are `v²/R` on the three-gate circle (§5). The
+reference demands about 1.5× that at a typical gate at both turn angles, so the
+two operating points still match and the argument stands.)*
+
 ---
 
 ## 3. Defects found in existing code
@@ -575,6 +579,23 @@ The clamp defaulted to 5.0 m/s² — below what an aggressive course demands
 (21 m/s²) and far below what the airframe delivers (50 m/s²), so while it binds
 every morphology is limited by the same constant.
 
+> **2026-09-24: "21 m/s²" was `v²/R` on the three-gate circle (§5).** On the
+> reference, the demand at 6 m/s nominal on the 90° course is 32 m/s² at a
+> typical gate and 41 at the last. **At the headline limit speeds** (§2,
+> corrected model) the reference asks for 50–53 m/s² at a typical gate and
+> 64–70 at the worst, on all three courses. That exceeds the `--max-accel 40`
+> used for every reported run. The clamp limits `|feedback + feedforward|`
+> (`compute_acceleration` in
+> `src/ariel/simulation/drone/controllers/lee_control/base_lee_controller.py`),
+> so the feedforward alone exceeds it at every interior gate.
+> **Not measured:** whether the clamp actually binds in those flights, since
+> rollouts do not log it. If it does, the shared 40 m/s² ceiling is part of
+> what sets every limit speed, which is the failure this section warns
+> about. The typical-gate demand at the limit also sits at the airframe's
+> lateral budget (`9.81·sqrt(TWR²−1)` = 50.5 m/s²), so thrust may bind first.
+> Cheapest check: log the fraction of clamp-active steps at each body's limit
+> speed.
+
 ---
 
 ### 3.8 The gate-pass test ignores altitude (found 2026-08-17; guarded, not fixed)
@@ -686,6 +707,7 @@ after 2026-08-17 uses it.
 | Maneuverability metrics | `src/ariel/simulation/drone/plant.py` | airevolve's `min(eig(Bm Bmᵀ))` and `rank(Bm)`, plus an inertia-normalised form |
 | `payload_mass` | `src/ariel/simulation/drone/drone_configuration.py` (+simulator, interface) | the mass model never reads `CorePlateNode.mass`, so a blueprint quad weighs 0.093 kg (TWR 8.9) against SPEAR's 0.83–1.25 kg. 0.667 kg of payload gives 0.829 kg at TWR 5.24 |
 | Parameterised slalom | `src/ariel/simulation/tasks/slalom_course.py` | difficulty as one number; see §5 |
+| Flyer-agnostic gate task (2026-09-24) | `src/ariel/simulation/tasks/gate_task.py` | the task without the controller: gate order, the §3.8 pass test (from `gate_metrics.in_plane_offset` / `passes`, shared with `crossing_report`), episode rules, `course_time`, `upcoming` gates for observations. Batched over environments for an Isaac Lab port. Optional airframe `clearance`. Agrees gate by gate with `crossing_report` on all six committed flight logs, as flown and with misses (`tests/unit/test_simulation/test_gate_task.py`). The sweep does not use it yet |
 | Design sweep | `examples/spear/19_morphology_design_sweep.py` | the experiment itself, with `--tracking-check`, `--calibrate` and `--map-only` modes |
 
 ### The maneuverability metric has a caveat worth knowing
@@ -812,6 +834,47 @@ is what keeps the two stacks from diverging.
   sharper turn also lengthens the legs, so the corner gets *wider* — radius
   4.00/2.31/2.00/2.31 m for 30/60/90/120°, i.e. non-monotonic. At fixed leg it
   falls 4.64 → 1.39 m.
+
+  > **Corrected 2026-09-24: the choice stands, the reasoning above does not.**
+  > The "radius" is `s / (2 sin(θ/2))`, the circle through three consecutive
+  > gates, and `v²/R` was quoted as the demand (e.g. "21 m/s² at 6 m/s"). The
+  > drone does not fly that circle. It flies the B-spline, which bends much
+  > harder at each gate and is timed uniformly in its parameter, so it slows
+  > where it is tightest. `SlalomCourse.reference_demand` now measures the
+  > reference itself. It reports lateral acceleration `|v×a|/|v|` per gate,
+  > the median over gates (typical corner) and the worst gate. Nominal
+  > 6 m/s, fixed leg 2.4 m:
+  >
+  > | θ | three-gate circle | reference tightest radius | v²/circle | reference, typical gate | reference, worst gate | polyline / spline length |
+  > |---|---|---|---|---|---|---|
+  > | 30° | 4.64 m | 1.17 m | 7.8 | 11.7 | 16.9 m/s² | 38.4 / 38.7 m |
+  > | 60° | 2.40 m | 0.52 m | 15.0 | 22.6 | 30.3 m/s² | 38.4 / 39.4 m |
+  > | 90° | 1.70 m | 0.25 m | 21.2 | 32.0 | 40.6 m/s² | 38.4 / 40.0 m |
+  > | 120° | 1.39 m | 0.10 m | 26.0 | 39.2 | 48.6 m/s² | 38.4 / 40.0 m |
+  >
+  > * The demand is 1.5× `v²/R` at a typical gate and 1.9–2.2× at the worst.
+  > * **The worst gate is always the last scored one**, 24–44% above the
+  >   typical gate. Nearing the spline's clamped end, the reference both
+  >   speeds up (5–14% faster at the last gate than at gate 7, related to the
+  >   gearing effect in `docs/tools/speed_semantics.py`) and bends more
+  >   tightly (radius 3–10% smaller). Speed dominates at 60°, and the two are
+  >   about equal at 90° and 120°. The
+  >   "uniform" course is therefore not one corner repeated: its finish is its
+  >   hardest corner. Whether flights actually fail there has not been checked.
+  > * Fixed *spacing* (2.0 m) is not non-monotonic in the way claimed. The
+  >   reference's tightest radius falls steadily (1.01 / 0.50 / 0.29 / 0.17 m),
+  >   and it is the *demand* that levels off above 90° (typical gate 28.8 →
+  >   27.8 m/s²).
+  > * The reason to hold the leg fixed is **course length**. At fixed leg the
+  >   polyline is 38.4 m at every θ, and the spline varies by 3%. At fixed
+  >   spacing it grows from 33.1 m to 64.0 m, so difficulty would be
+  >   confounded with flight length, and with anything that accumulates over a
+  >   flight, such as the altitude sag in §3.8. (Argument due to the author,
+  >   2026-09-24.)
+  > * CSVs in `docs/data/` written before this date carry `a_lat` /
+  >   `a_lat_at_limit` columns computed as `v²/R` on the circle. They are
+  >   kept as records. New runs write `a_lat_ref_median*` and
+  >   `a_lat_ref_peak*` instead.
 * **Gate yaw is the bisector of adjacent legs.** `GateChecker` counts a pass
   only when the drone crosses the plane with normal `(cos yaw, sin yaw, 0)`; the
   `SlalomGates` preset in `src/ariel/simulation/drone/controllers/utils/gate_configs.py` uses a
@@ -1093,7 +1156,7 @@ flag nobody can safely change.
 | flag | default | why it exists |
 |---|---|---|
 | `--feedforward` | **off** | Passes the trajectory's velocity and acceleration to the position controller. The library hard-codes a zero velocity setpoint, so a moving reference is tracked with a stop-here target and the drone lags by a fixed ~0.25 s that no gain increase removes. Off by default because the feedback gains are not tuned for it (§8 item 8). |
-| `--max-accel` | 5.0 | Commanded-acceleration clamp. The library default is below what an aggressive course demands (21 m/s^2) and far below what the airframe delivers (50), so while it binds **every morphology is limited by the same constant** and no sweep can see geometry. Use 40. |
+| `--max-accel` | 5.0 | Commanded-acceleration clamp. The library default is below what an aggressive course demands (21 m/s^2 as first quoted; the reference actually asks 32-41 at 6 m/s and 50-70 at the limit speeds, see §3.7's 2026-09-24 note) and far below what the airframe delivers (50), so while it binds **every morphology is limited by the same constant** and no sweep can see geometry. Use 40. |
 | `--fixed-gains` | off | Disables `auto_scale_gains`, so one controller flies every body. This is the co-design evidence: it widens the morphology spread 2-5x and makes the ordering monotone in roll agility (§2). |
 | `--pos-gain` / `--vel-gain` | 14.3 / 9.0 | Position and velocity gains, inherited from example 17. Exposed during the tracking investigation; 7x the position gain moved tracking by 10%, which is how gain tuning was ruled out as the cause of the lag. |
 

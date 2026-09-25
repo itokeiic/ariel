@@ -196,7 +196,9 @@ parser.add_argument("--vel-gain", type=float, default=LEE_VEL_GAIN)
 parser.add_argument("--max-accel", type=float, default=5.0,
                     help="commanded-acceleration clamp, m/s^2. The library "
                          "default of 5.0 is below what a fast course demands "
-                         "(21 m/s^2 at 6 m/s here) and below what the airframe "
+                         "(the 90 deg reference asks 32 m/s^2 at a typical gate "
+                         "and 41 at the last, at 6 m/s nominal; "
+                         "SlalomCourse.reference_demand) and below what the airframe "
                          "can deliver (50 m/s^2), so while it binds every "
                          "morphology is limited by the same constant. Raising "
                          "it alone does NOT fix tracking -- see --feedforward.")
@@ -371,8 +373,11 @@ def _build_stack(propellers, course, total_time):
         # Both off by default in the library, and both must be on to fly an
         # aggressive trajectory: without feedforward the controller lags a
         # moving reference by ~0.25 s, and the 5 m/s^2 default clamp sits far
-        # below what this course demands (21 m/s^2) or the airframe can deliver
-        # (50 m/s^2), so every morphology would be limited by the same constant.
+        # below what this course demands (32-41 m/s^2 on the 90 deg reference at
+        # 6 m/s nominal) or the airframe can deliver (50 m/s^2), so every
+        # morphology would be limited by the same constant.
+        # (Corrected 2026-09-24: this said 21 m/s^2, which was speed**2 over
+        # the three-gate circle radius, not the reference actually flown.)
         velocity_feedforward=args.feedforward,
         max_accel=args.max_accel,
         # (omega_n, zeta) wins when given; otherwise the raw inherited gains.
@@ -639,17 +644,18 @@ def tracking_check() -> None:
     course = courses[0]
     genome = make_genome(np.pi / 4)
     d = describe(genome)
-    console.rule(f"tracking check — X quad, {args.turn_deg:.0f}° slalom, "
-                 f"R={course.radius:.2f} m")
+    console.rule(f"tracking check — X quad, {args.turn_deg:.0f}° slalom")
     console.log(f"airframe: {d['mass']:.3f} kg, TWR {d['twr']:.2f}, "
                 f"lateral budget {9.81*np.sqrt(max(d['twr']**2-1,0)):.0f} m/s²")
     rows = []
     for speed in (2.0, 4.0, 6.0, 8.0):
-        a_lat = course.lateral_acceleration(speed)
+        dem = course.reference_demand(speed, startup_time=STARTUP_TIME)
         r = evaluate(genome, courses, speed)
-        rows.append({"speed": speed, "a_lat": a_lat, **r})
+        rows.append({"speed": speed, "a_lat_ref_median": dem.a_lat_median,
+                     "a_lat_ref_peak": dem.a_lat_peak, **r})
         console.log(
-            f"  {speed:>4.1f} m/s  a_lat={a_lat:5.1f}  gates={r['gates']:>2}/{args.n_gates} "
+            f"  {speed:>4.1f} m/s  a_lat={dem.a_lat_median:5.1f}/{dem.a_lat_peak:5.1f}  "
+            f"gates={r['gates']:>2}/{args.n_gates} "
             f"trk={r['tracking_err']:6.3f} m  sat={r['saturation']*100:5.1f}%  "
             f"fit={r['fitness']:8.3f}  {'completed' if r['completed'] else ''}")
     _write_csv(rows, DATA / f"tracking_check_{RUN_ID}.csv")
@@ -724,7 +730,7 @@ def max_speed_sweep() -> list[dict]:
     for turn in turns:
         course = slalom_gates(turn, leg=args.leg, n_gates=args.n_gates,
                               gate_size=args.gate_size)
-        console.rule(f"max-speed sweep — {turn:.0f}° slalom, R={course.radius:.2f} m")
+        console.rule(f"max-speed sweep — {turn:.0f}° slalom")
         for t in angles:
             g = make_genome(float(t))
             if rotors_overlap(g):
@@ -732,11 +738,16 @@ def max_speed_sweep() -> list[dict]:
             t0 = time.time()
             r = max_completing_speed(g, course)
             geo = describe(g)
+            # Measured on the reference at the limit speed. CSVs written before
+            # 2026-09-24 carry `a_lat_at_limit` instead: speed**2 over the
+            # three-gate circle radius, about 1.5x too low at a typical gate.
+            dem = (course.reference_demand(r["max_speed"], startup_time=STARTUP_TIME)
+                   if np.isfinite(r["max_speed"]) else None)
             rows.append({"turn_deg": turn, "half_angle_deg": float(np.degrees(t)),
                          "max_speed": r["max_speed"], "n_rollouts": r["n_rollouts"],
                          "bracket": r["bracket"], "monotone": int(r["monotone"]),
-                         "a_lat_at_limit": (r["max_speed"] ** 2 / course.radius
-                                            if np.isfinite(r["max_speed"]) else float("nan")),
+                         "a_lat_ref_median_at_limit": dem.a_lat_median if dem else float("nan"),
+                         "a_lat_ref_peak_at_limit": dem.a_lat_peak if dem else float("nan"),
                          "tracking_err": r["tracking_err"],
                          "saturation_lo": r["saturation_lo"],
                          "saturation_hi": r["saturation_hi"],
@@ -744,7 +755,8 @@ def max_speed_sweep() -> list[dict]:
                          "maneuverability_I": geo["maneuverability_I"]})
             flag = "" if r["monotone"] else "  [red]NON-MONOTONE[/red]"
             console.log(f"  t={np.degrees(t):>5.1f}°  max speed {r['max_speed']:5.3f} m/s  "
-                        f"a_lat={rows[-1]['a_lat_at_limit']:5.1f}  "
+                        f"a_lat={rows[-1]['a_lat_ref_median_at_limit']:5.1f}"
+                        f"/{rows[-1]['a_lat_ref_peak_at_limit']:5.1f}  "
                         f"α_roll={geo['alpha_roll']:6.1f}  clip_lo={100*r['saturation_lo']:4.1f}%  "
                         f"({r['n_rollouts']} rollouts, {time.time()-t0:.0f}s){flag}")
         best = max((r for r in rows if r["turn_deg"] == turn and np.isfinite(r["max_speed"])),
@@ -825,9 +837,11 @@ def calibrate() -> list[dict]:
             res = {k: evaluate(make_genome(t), courses, speed) for k, t in probes.items()}
             gseq = [res[k]["gates"] for k in probes]
             gflw = [res[k]["gates_flown"] for k in probes]
+            dem = courses[0].reference_demand(speed, startup_time=STARTUP_TIME)
             row = {
                 "turn_deg": turn, "speed": speed,
-                "a_lat": courses[0].lateral_acceleration(speed),
+                "a_lat_ref_median": dem.a_lat_median,
+                "a_lat_ref_peak": dem.a_lat_peak,
                 "gates_seq_mean": float(np.mean(gseq)),
                 "gates_seq_spread": float(np.ptp(gseq)),
                 "gates_flown_mean": float(np.mean(gflw)),
@@ -839,7 +853,8 @@ def calibrate() -> list[dict]:
             }
             rows.append(row)
             console.log(
-                f"  turn {turn:>3.0f}°  {speed:>3.1f} m/s  a_lat={row['a_lat']:5.1f}  "
+                f"  turn {turn:>3.0f}°  {speed:>3.1f} m/s  "
+                f"a_lat={row['a_lat_ref_median']:5.1f}/{row['a_lat_ref_peak']:5.1f}  "
                 f"seq {row['gates_seq_mean']:5.2f}±{row['gates_seq_spread']:<4.2f}  "
                 f"flown {row['gates_flown_mean']:5.2f}±{row['gates_flown_spread']:<4.2f}  "
                 f"trk={row['tracking_err']:5.3f}  clip={100*row['clip_lo']:4.1f}%")
@@ -877,7 +892,9 @@ def sweep_half_angle() -> list[dict]:
     lo, hi = feasible_half_angle_range(ARM_LENGTH)
     console.rule(f"half-angle sweep — t ∈ [{np.degrees(lo):.1f}°, {np.degrees(hi):.1f}°], "
                  f"{args.turn_deg:.0f}° slalom at {args.speed} m/s")
-    console.log(f"course: R={course.radius:.2f} m, a_lat={course.lateral_acceleration(args.speed):.1f} m/s², "
+    dem = course.reference_demand(args.speed, startup_time=STARTUP_TIME)
+    console.log(f"course: reference a_lat {dem.a_lat_median:.1f} m/s² typical, "
+                f"{dem.a_lat_peak:.1f} worst gate, "
                 f"traversal {course.traversal_time(args.speed, STARTUP_TIME):.2f} s")
     rows = []
     for t in np.linspace(lo, hi, args.points):
@@ -1000,11 +1017,13 @@ def video() -> None:
         console.log(f"  → {args.log_npz}")
 
     path = DATA / f"slalom_{turn:.0f}deg_t{half_deg:.2f}_{speed:.3f}ms.mp4"
+    dem = course.reference_demand(speed, startup_time=STARTUP_TIME)
     _flight_video.render(
         path, out["log"], course, g,
         title=f"{turn:.0f}° slalom — arm half-angle {half_deg:.2f}°, {speed:.3f} m/s",
         subtitle=(f"{n_passed(rep)}/{len(course.gate_pos)} gates through the opening · "
-                  f"R={course.radius:.2f} m · tracking {out['tracking_err']:.2f} m · "
+                  f"ref a_lat {dem.a_lat_median:.0f}/{dem.a_lat_peak:.0f} m/s² · "
+                  f"tracking {out['tracking_err']:.2f} m · "
                   f"motor clip {100 * out['saturation_lo']:.0f}%"),
         prop_radius=PROP_RADIUS, fps=args.video_fps)
     console.log(f"  → {path}")

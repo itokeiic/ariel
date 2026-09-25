@@ -31,7 +31,53 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["GateCrossing", "crossing_report", "n_passed"]
+__all__ = ["GateCrossing", "crossing_report", "gate_normal", "in_plane_offset",
+           "n_passed", "passes"]
+
+
+def gate_normal(gate_yaw: np.ndarray | float) -> np.ndarray:
+    """Unit normal of a gate plane, ``(cos yaw, sin yaw, 0)``; shape (..., 3).
+
+    Gates are vertical: the normal is horizontal, and a drone passes a gate by
+    crossing this plane in the direction of the normal.
+    """
+    yaw = np.asarray(gate_yaw, dtype=float)
+    return np.stack([np.cos(yaw), np.sin(yaw), np.zeros_like(yaw)], axis=-1)
+
+
+def in_plane_offset(pos: np.ndarray, gate_pos: np.ndarray, gate_yaw: np.ndarray | float
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Where ``pos`` sits relative to a gate: the single definition of the test.
+
+    Broadcasts over leading dimensions, so one call scores many drones against
+    their own gates. Returns ``(signed, lateral, vertical, offset)``:
+
+    * ``signed`` -- distance along the gate normal; negative before the gate.
+    * ``lateral`` -- horizontal in-plane distance from the centre (unsigned).
+    * ``vertical`` -- in-plane vertical offset (signed: + is below in NED).
+    * ``offset`` -- in-plane distance from the centre, ``hypot(lateral, vertical)``.
+
+    The along-normal part is removed before measuring, so a sample taken just
+    past the plane is not penalised for how far past it landed.
+    """
+    normal = gate_normal(gate_yaw)
+    rel = np.asarray(pos, dtype=float) - np.asarray(gate_pos, dtype=float)
+    signed = np.sum(rel * normal, axis=-1)
+    in_plane = rel - signed[..., None] * normal
+    lateral = np.linalg.norm(in_plane[..., :2], axis=-1)
+    vertical = in_plane[..., 2]
+    return signed, lateral, vertical, np.hypot(lateral, vertical)
+
+
+def passes(offset: np.ndarray | float, gate_size: float,
+           clearance: np.ndarray | float = 0.0) -> np.ndarray:
+    """Whether an in-plane offset clears a circular opening of diameter ``gate_size``.
+
+    ``clearance`` is how far the airframe extends from its centre within the
+    gate plane. At 0 the drone is scored as a point, which is how every result
+    in the report was scored. A positive value asks the whole airframe to fit.
+    """
+    return np.asarray(offset) + np.asarray(clearance) <= gate_size / 2.0
 
 
 @dataclass(frozen=True)
@@ -59,25 +105,17 @@ def crossing_report(positions: np.ndarray, gate_pos: np.ndarray,
     control point is gate 0's centre.
     """
     positions = np.asarray(positions, dtype=float)
-    half = gate_size / 2.0
     out: list[GateCrossing] = []
     for k, (g, yaw) in enumerate(zip(np.asarray(gate_pos, dtype=float),
                                      np.asarray(gate_yaw, dtype=float))):
-        normal = np.array([np.cos(yaw), np.sin(yaw), 0.0])
-        signed = (positions - g) @ normal
+        signed, lateral, vertical, offset = in_plane_offset(positions, g, yaw)
         sign_change = np.flatnonzero((signed[:-1] < 0.0) & (signed[1:] >= 0.0))
         if not len(sign_change):
             out.append(GateCrossing(k, False, -1, np.inf, np.inf, np.inf, False))
             continue
         i = int(sign_change[0]) + 1
-        # Project the offset into the gate plane: remove the along-normal part.
-        rel = positions[i] - g
-        in_plane = rel - float(rel @ normal) * normal
-        lateral = float(np.linalg.norm(in_plane[:2]))
-        vertical = float(in_plane[2])
-        offset = float(np.hypot(lateral, vertical))
-        out.append(GateCrossing(k, True, i, lateral, vertical, offset,
-                                bool(offset <= half)))
+        out.append(GateCrossing(k, True, i, float(lateral[i]), float(vertical[i]),
+                                float(offset[i]), bool(passes(offset[i], gate_size))))
     return out
 
 
